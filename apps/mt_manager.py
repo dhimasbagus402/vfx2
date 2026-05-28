@@ -7,6 +7,7 @@ from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk, messagebox
+__version__ = "1.2"
 
 # ── Design Tokens — sesuai HTML metatrader_manager_ui.html ────────────────────
 BG          = "#0d1114"   # --bg
