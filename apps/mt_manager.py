@@ -664,7 +664,9 @@ class MTManager:
         tk.Label(title_frame, text="MetaTrader", bg=BG2, fg=ACCENT,
                  font=(f, 11, "bold")).pack(side="left")
         tk.Label(title_frame, text=" Manager \u2014 Linux Edition",
-                 bg=BG2, fg=FG2, font=(f, 11)).pack(side="left")
+         bg=BG2, fg=FG2, font=(f, 11)).pack(side="left")
+        tk.Label(title_frame, text=f"  v{__version__}",
+         bg=BG2, fg=FG3, font=(f, 9)).pack(side="left", pady=(2, 0))
 
         # ════════════════════════════════════════════════════════════════
         # BODY  — sidebar + main
