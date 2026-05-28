@@ -1,10 +1,12 @@
 import re
 import shutil
 import subprocess
+import threading
+import datetime
 from pathlib import Path
 import tkinter as tk
+import tkinter.font as tkf
 from tkinter import ttk, messagebox
-__version__ = "1.1"
 
 # ── Design Tokens — sesuai HTML metatrader_manager_ui.html ────────────────────
 BG          = "#0d1114"   # --bg
@@ -46,6 +48,39 @@ SIDEBAR_BG  = BG2
 ALLOWED_ROOT = Path.home()
 DOCS_DIR     = Path.home() / "Documents"
 
+# ── Table Text Config ─────────────────────────────────────────────────────────
+TABLE_FONT_SIZE    = 10        # ukuran font isi tabel
+TABLE_HEADING_SIZE = 9         # ukuran font heading kolom
+# Kolom-kolom tabel: (id, heading, lebar_px, anchor, stretch)
+# Catatan: kolom "cat" dirender di cat_tree terpisah agar bisa beda warna per-baris
+TABLE_COLUMNS = [
+    ("name",     "NAME",     0,   "w",      True),
+    ("type",     "TYPE",     70,  "center", False),
+    ("size",     "SIZE",     80,  "e",      False),
+    ("modified", "MODIFIED", 100, "w",      False),
+]
+
+# ── Category Column Config ─────────────────────────────────────────────────────
+CAT_COL_WIDTH  = 100           # lebar kolom CATEGORY (px)
+CAT_COLORS = {
+    "Expert":    "#00c896",    # hijau
+    "Indicator": "#f0a030",    # kuning
+    "Script":    "#a78bfa",    # ungu
+    "Log":       "#e8edf5",    # putih
+}
+
+# ── Checkbox Config ────────────────────────────────────────────────────────────
+# Checkbox memakai Treeview TERPISAH (split-treeview) agar ukurannya
+# 100% independen dari font teks kolom data di sebelah kanan.
+CHK_COL_WIDTH = 36             # lebar kolom checkbox (px)
+CHK_FONT_SIZE = 14             # ukuran karakter ☐/☑ — bebas, tidak pengaruhi teks tabel
+CHK_CHAR_OFF  = "\u25a1"            # karakter checkbox kosong
+CHK_CHAR_ON   = "\u25a0"            # karakter checkbox terisi
+
+# Row height: 0 = auto (pakai nilai terbesar antara TABLE_FONT_SIZE & CHK_FONT_SIZE + padding)
+# Kedua Treeview pakai row height yang sama agar baris tetap sejajar.
+TABLE_ROW_HEIGHT   = 0         # 0 = auto; atau set manual mis. 32
+
 EXTRACT_EXTS = {".zip", ".rar", ".tar", ".gz", ".bz2", ".xz", ".7z",
                 ".tar.gz", ".tar.bz2", ".tar.xz"}
 
@@ -56,13 +91,18 @@ SIDEBAR_W   = 210
 
 
 # ── Font resolver ──────────────────────────────────────────────────────────────
+_FONT_CACHE: dict = {}
+
 def resolve_font(preferred, fallback="DejaVu Sans Mono"):
+    if preferred in _FONT_CACHE:
+        return _FONT_CACHE[preferred]
     try:
-        import tkinter.font as tkf
         fams = tkf.families()
-        return preferred if preferred in fams else fallback
+        result = preferred if preferred in fams else fallback
     except Exception:
-        return fallback
+        result = fallback
+    _FONT_CACHE[preferred] = result
+    return result
 
 
 # ── Rounded Canvas Container ───────────────────────────────────────────────────
@@ -162,39 +202,65 @@ class RoundScrollbar(tk.Canvas):
         if h < self.ARROW_H * 2 + 4:
             return
         self.create_rectangle(0, self.ARROW_H, w, h - self.ARROW_H,
-                               fill=self.TRACK_COL, outline="")
+                               fill=self.TRACK_COL, outline="", tags="track_bg")
         ty1, ty2 = self._thumb_rect()
         tc = self.THUMB_HOV if self._hover_zone == "thumb" else self.THUMB_COL
         self._draw_rounded_rect(2, ty1+1, w-2, ty2-1, self.THUMB_R, tc)
         bu = self.BTN_HOV if self._hover_zone == "up" else self.BTN_COL
-        self.create_rectangle(0, 0, w, self.ARROW_H, fill=bu, outline="")
+        self.create_rectangle(0, 0, w, self.ARROW_H, fill=bu, outline="", tags="btn_up")
         ac = self.ARROW_HOV if self._hover_zone == "up" else self.ARROW_COL
         self._draw_arrow(w//2, self.ARROW_H//2, "up", ac)
         bd = self.BTN_HOV if self._hover_zone == "down" else self.BTN_COL
-        self.create_rectangle(0, h-self.ARROW_H, w, h, fill=bd, outline="")
+        self.create_rectangle(0, h-self.ARROW_H, w, h, fill=bd, outline="", tags="btn_down")
         ac2 = self.ARROW_HOV if self._hover_zone == "down" else self.ARROW_COL
         self._draw_arrow(w//2, h - self.ARROW_H//2, "down", ac2)
+
+    def _update_hover(self):
+        """Lightweight update: hanya ubah warna hover tanpa full redraw."""
+        w = self.W
+        h = self.winfo_height()
+        if h < self.ARROW_H * 2 + 4:
+            return
+        # thumb
+        tc = self.THUMB_HOV if self._hover_zone == "thumb" else self.THUMB_COL
+        self.itemconfig("thumb_shape", fill=tc)
+        # btn up
+        bu = self.BTN_HOV if self._hover_zone == "up" else self.BTN_COL
+        self.itemconfig("btn_up", fill=bu)
+        ac = self.ARROW_HOV if self._hover_zone == "up" else self.ARROW_COL
+        self.itemconfig("arrow_up", fill=ac)
+        # btn down
+        bd = self.BTN_HOV if self._hover_zone == "down" else self.BTN_COL
+        self.itemconfig("btn_down", fill=bd)
+        ac2 = self.ARROW_HOV if self._hover_zone == "down" else self.ARROW_COL
+        self.itemconfig("arrow_down", fill=ac2)
 
     def _draw_rounded_rect(self, x1, y1, x2, y2, r, color):
         r = min(r, (x2-x1)//2, max(1,(y2-y1)//2))
         pts = [x1+r,y1, x2-r,y1, x2,y1, x2,y1+r,
                x2,y2-r, x2,y2, x2-r,y2, x1+r,y2,
                x1,y2, x1,y2-r, x1,y1+r, x1,y1, x1+r,y1]
-        self.create_polygon(pts, smooth=True, fill=color, outline="")
+        self.create_polygon(pts, smooth=True, fill=color, outline="", tags="thumb_shape")
 
     def _draw_arrow(self, cx, cy, direction, color):
         s = 3
         if direction == "up":
             pts = [cx, cy-s, cx+s, cy+s, cx-s, cy+s]
+            tag = "arrow_up"
         else:
             pts = [cx, cy+s, cx+s, cy-s, cx-s, cy-s]
-        self.create_polygon(pts, fill=color, outline="")
+            tag = "arrow_down"
+        self.create_polygon(pts, fill=color, outline="", tags=tag)
 
     def _on_motion(self, e):
         zone = self._zone(e.y)
         if zone != self._hover_zone:
             self._hover_zone = zone
-            self._redraw()
+            # gunakan _update_hover (ringan) bila item sudah ada, else full redraw
+            if self.find_withtag("thumb_shape"):
+                self._update_hover()
+            else:
+                self._redraw()
 
     def _on_leave(self, _=None):
         self._hover_zone = None
@@ -404,12 +470,9 @@ def make_pill_btn(parent, text, cmd, bg, fg, hover_bg,
     canvas.bind("<Leave>",     _leave)
     canvas.bind("<Button-1>",  _click)
 
-    tmp = tk.Label(parent, text=text, font=(_f, font_size, "bold"),
-                   padx=padx, pady=pady)
-    tmp.update_idletasks()
-    rw = tmp.winfo_reqwidth()
-    rh = tmp.winfo_reqheight()
-    tmp.destroy()
+    _fnt = tkf.Font(family=_f, size=font_size, weight="bold")
+    rw = _fnt.measure(text) + padx * 2
+    rh = _fnt.metrics("linespace") + pady * 2
     canvas.config(height=rh, width=rw if not fill_x else 1)
     return holder, canvas
 
@@ -422,12 +485,10 @@ class Badge(tk.Canvas):
     """Small pill badge — e.g. 'MT4' in blue, 'MT5' in teal."""
     def __init__(self, parent, text, bg_color, fg_color, radius=4, **kw):
         _f = resolve_font(FONT)
-        # measure text
-        tmp = tk.Label(parent, text=text, font=(_f, 8, "bold"), padx=5, pady=2)
-        tmp.update_idletasks()
-        w = tmp.winfo_reqwidth() + 2
-        h = tmp.winfo_reqheight()
-        tmp.destroy()
+        # measure text tanpa membuat widget sementara
+        _fnt = tkf.Font(family=_f, size=8, weight="bold")
+        w = _fnt.measure(text) + 5 * 2 + 2
+        h = _fnt.metrics("linespace") + 2 * 2
         outer = parent.cget("bg") if hasattr(parent, "cget") else BG2
         super().__init__(parent, width=w, height=h,
                          bg=outer, highlightthickness=0, **kw)
@@ -491,17 +552,56 @@ class MTManager:
         s.theme_use("clam")
         f = self._font
 
+        # row height bersama: dipakai oleh KEDUA treeview agar baris sejajar
+        # hitung dari font masing-masing secara independen, ambil yang terbesar
+        _rh_data = TABLE_FONT_SIZE * 2 + 6
+        _rh_chk  = CHK_FONT_SIZE  * 2 + 6
+        _rh = TABLE_ROW_HEIGHT if TABLE_ROW_HEIGHT > 0 else max(_rh_data, _rh_chk)
+        self._shared_row_height = _rh   # simpan agar bisa dipakai _build_ui
+
+        # ── Treeview data (kolom NAME, TYPE, dst) ──
         s.configure("App.Treeview",
             background=BG3, foreground=FG, fieldbackground=BG3,
-            rowheight=29, font=(f, 10), borderwidth=0, relief="flat",
+            rowheight=_rh, font=(f, TABLE_FONT_SIZE),
+            borderwidth=0, relief="flat",
             highlightthickness=0, highlightbackground=BG3, highlightcolor=BG3)
         s.configure("App.Treeview.Heading",
             background=BG4, foreground=FG3,
-            font=(f, 9), relief="flat", borderwidth=0, padding=(10, 6))
+            font=(f, TABLE_HEADING_SIZE), relief="flat", borderwidth=0, padding=(10, 6))
         s.map("App.Treeview",
             background=[("selected", ACCENT_DIM)],
             foreground=[("selected", ACCENT)])
         s.map("App.Treeview.Heading",
+            background=[("active", BG4)], relief=[("active", "flat")])
+
+        # ── Treeview checkbox (kolom ☐/☑ terpisah — font independen) ──
+        s.configure("Chk.Treeview",
+            background=BG3, foreground=FG, fieldbackground=BG3,
+            rowheight=_rh, font=(f, CHK_FONT_SIZE),   # ← font checkbox independen
+            borderwidth=0, relief="flat",
+            highlightthickness=0, highlightbackground=BG3, highlightcolor=BG3)
+        s.configure("Chk.Treeview.Heading",
+            background=BG4, foreground=FG3,
+            font=(f, TABLE_HEADING_SIZE), relief="flat", borderwidth=0, padding=(0, 6))
+        s.map("Chk.Treeview",
+            background=[("selected", ACCENT_DIM)],
+            foreground=[("selected", ACCENT)])
+        s.map("Chk.Treeview.Heading",
+            background=[("active", BG4)], relief=[("active", "flat")])
+
+        # ── Treeview category (kolom CATEGORY terpisah — warna per-baris independen) ──
+        s.configure("Cat.Treeview",
+            background=BG3, foreground=FG, fieldbackground=BG3,
+            rowheight=_rh, font=(f, TABLE_FONT_SIZE),
+            borderwidth=0, relief="flat",
+            highlightthickness=0, highlightbackground=BG3, highlightcolor=BG3)
+        s.configure("Cat.Treeview.Heading",
+            background=BG4, foreground=FG3,
+            font=(f, TABLE_HEADING_SIZE), relief="flat", borderwidth=0, padding=(10, 6))
+        s.map("Cat.Treeview",
+            background=[("selected", ACCENT_DIM)],
+            foreground=[("selected", ACCENT)])
+        s.map("Cat.Treeview.Heading",
             background=[("active", BG4)], relief=[("active", "flat")])
 
         # Side treeview (terminal list) — no headings shown
@@ -519,6 +619,12 @@ class MTManager:
 
         # Remove outer border/highlight from Treeview widgets
         s.layout("App.Treeview", [
+            ("Treeview.treearea", {"sticky": "nswe"})
+        ])
+        s.layout("Chk.Treeview", [
+            ("Treeview.treearea", {"sticky": "nswe"})
+        ])
+        s.layout("Cat.Treeview", [
             ("Treeview.treearea", {"sticky": "nswe"})
         ])
         s.layout("Side.Treeview", [
@@ -556,10 +662,8 @@ class MTManager:
         title_frame.pack(side="left", padx=10, fill="y")
         tk.Label(title_frame, text="MetaTrader", bg=BG2, fg=ACCENT,
                  font=(f, 11, "bold")).pack(side="left")
-        tk.Label(title_frame, text=" Manager \u2014 digiOS",
+        tk.Label(title_frame, text=" Manager \u2014 Linux Edition",
                  bg=BG2, fg=FG2, font=(f, 11)).pack(side="left")
-        tk.Label(title_frame, text=f"  v{__version__}", bg=BG2, fg=FG3,
-                 font=(f, 9)).pack(side="left", pady=(3, 0))
 
         # ════════════════════════════════════════════════════════════════
         # BODY  — sidebar + main
@@ -640,7 +744,7 @@ class MTManager:
         h1, c1 = make_pill_btn(tb, "\u2191 Install EA / Indicator",
                                self._install_menu,
                                bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
-                               font_size=9, padx=12, pady=7, radius=10)
+                               font_size=10, padx=12, pady=7, radius=10)
         h1.pack(side="left", pady=8, padx=(0, 4))
         self._install_btn_holder = h1
         self._install_btn_canvas = c1
@@ -651,21 +755,21 @@ class MTManager:
         # Browse
         h2, c2 = make_pill_btn(tb, "\u25a6 Browse", self.browse_files,
                                bg=BG3, fg=FG, hover_bg=BG4,
-                               font_size=9, padx=12, pady=7, radius=10)
+                               font_size=10, padx=12, pady=7, radius=10)
         h2.pack(side="left", pady=8, padx=2)
         Tooltip(c2, "Buka data Folder MT")
 
         # Clear Logs
         h3, c3 = make_pill_btn(tb, "\u2015 Clear Logs", self.clear_logs,
                                bg="#261a05", fg=WARN, hover_bg="#3d2a08",
-                               font_size=9, padx=12, pady=7, radius=10)
+                               font_size=10, padx=12, pady=7, radius=10)
         h3.pack(side="left", pady=8, padx=2)
         Tooltip(c3, "Hapus semua Logs pada MT")
 
         # Uninstall
-        h4, c4 = make_pill_btn(tb, "\u232b Uninstall", self.uninstall_file,
+        h4, c4 = make_pill_btn(tb, "\u232b Delete", self.uninstall_file,
                                bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
-                               font_size=9, padx=12, pady=7, radius=10)
+                               font_size=10, padx=12, pady=7, radius=10)
         h4.pack(side="left", pady=8, padx=2)
         Tooltip(c4, "Hapus EA atau Indikator pada MT")
 
@@ -696,7 +800,7 @@ class MTManager:
             tk.Label(col, text=label, bg=BG2, fg=FG3,
                      font=(f, 8), anchor="w").pack(anchor="w")
             var = tk.StringVar(value=default)
-            color = ACCENT3 if key in ("type", "status") else (ACCENT if key == "path" else FG)
+            color = FG if key == "type" else (ACCENT if key == "path" else FG)
             lbl = tk.Label(col, textvariable=var, bg=BG2, fg=color,
                            font=(f, 10, "bold"), anchor="w")
             lbl.pack(anchor="w")
@@ -721,30 +825,99 @@ class MTManager:
         sb_file = RoundScrollbar(tbl_box.inner, command=self._file_yview)
         sb_file.pack(side="right", fill="y", padx=(0, 2), pady=3)
 
+        # checked-set: stores iids of checked rows
+        self._checked = set()
+        self._all_checked = False
+
+        # ── Treeview CHECKBOX (kiri, font independen via Chk.Treeview style) ──
+        self.chk_tree = ttk.Treeview(
+            tbl_box.inner,
+            columns=("chk",),
+            show="headings",
+            selectmode="browse",
+            style="Chk.Treeview",
+            yscrollcommand=self._on_chk_scroll,
+        )
+        # Paksa hilangkan border/highlight di level widget (bukan hanya style)
+        self.chk_tree.configure(takefocus=False)
+        try:
+            self.chk_tree.tk.call("ttk::style", "configure", "Chk.Treeview",
+                                  "-highlightthickness", 0, "-borderwidth", 0)
+        except Exception:
+            pass
+        self.chk_tree.heading("chk", text=CHK_CHAR_OFF, anchor="center",
+                              command=self._toggle_all)
+        self.chk_tree.column("chk", width=CHK_COL_WIDTH, minwidth=CHK_COL_WIDTH,
+                             anchor="center", stretch=False)
+        self.chk_tree.pack(side="left", fill="y")
+
+        # Sync scroll: klik di chk_tree juga gerak file_tree & sebaliknya
+        self.chk_tree.tag_configure("row_even", background=BG3)
+        self.chk_tree.tag_configure("row_odd",  background=BG4)
+        self.chk_tree.tag_configure("checked",  background=ACCENT_DIM)
+
+        # Tidak ada separator — biarkan chk_tree dan cat_tree langsung berdempet
+
+        # ── Treeview CATEGORY (tengah, warna per-kategori via tag independen) ──
+        self.cat_tree = ttk.Treeview(
+            tbl_box.inner,
+            columns=("cat",),
+            show="headings",
+            selectmode="browse",
+            style="Cat.Treeview",
+            yscrollcommand=self._on_cat_scroll,
+        )
+        self.cat_tree.heading("cat", text="CATEGORY", anchor="w")
+        self.cat_tree.column("cat", width=CAT_COL_WIDTH, minwidth=CAT_COL_WIDTH,
+                             anchor="w", stretch=False)
+        self.cat_tree.pack(side="left", fill="y")
+
+        # Tag warna per-kategori — hanya berlaku di cat_tree ini
+        for label, color in CAT_COLORS.items():
+            self.cat_tree.tag_configure(label, foreground=color)
+        self.cat_tree.tag_configure("row_even", background=BG3)
+        self.cat_tree.tag_configure("row_odd",  background=BG4)
+        self.cat_tree.tag_configure("checked",  background=ACCENT_DIM)
+
+        # ── Treeview DATA (kanan, kolom NAME TYPE SIZE MODIFIED) ──
         self.file_tree = ttk.Treeview(
             tbl_box.inner,
-            columns=("name", "type", "cat", "size", "modified"),
+            columns=("name", "type", "size", "modified"),
             show="headings", selectmode="browse",
             style="App.Treeview",
-            yscrollcommand=sb_file.set,
+            yscrollcommand=self._on_file_scroll,
         )
-        for col, lbl, w, anc, stretch in [
-            ("name",     "NAME",     0,   "w", True),
-            ("type",     "TYPE",     70,  "center", False),
-            ("cat",      "CATEGORY", 100, "w",      False),
-            ("size",     "SIZE",     80,  "e",      False),
-            ("modified", "MODIFIED", 100, "w",      False),
-        ]:
+
+        for col, lbl, w, anc, stretch in TABLE_COLUMNS:
             self.file_tree.heading(col, text=lbl)
             self.file_tree.column(col, width=w, anchor=anc, stretch=stretch)
         self.file_tree.pack(side="left", fill="both", expand=True)
+        self._sb_file = sb_file   # simpan referensi untuk yscrollcommand
 
-        self.file_tree.tag_configure("Expert",    foreground=ACCENT2)
-        self.file_tree.tag_configure("Indicator", foreground=ACCENT2)
-        self.file_tree.tag_configure("Script",    foreground=ACCENT2)
-        self.file_tree.tag_configure("Log",       foreground=ACCENT2)
-        self.file_tree.tag_configure("row_even",  background=BG3)
-        self.file_tree.tag_configure("row_odd",   background=BG4)
+        # Paksa hilangkan border chk_tree dan cat_tree setelah window di-render
+        def _kill_borders():
+            for tree in (self.chk_tree, self.cat_tree):
+                try:
+                    tree.tk.call(tree, "configure",
+                                 "-highlightthickness", 0,
+                                 "-highlightbackground", BG3,
+                                 "-highlightcolor", BG3,
+                                 "-borderwidth", 0,
+                                 "-relief", "flat")
+                except Exception:
+                    pass
+        self.root.after_idle(_kill_borders)
+
+        # toggle checkbox on click on chk_tree
+        self.chk_tree.bind("<ButtonRelease-1>", self._on_chk_click)
+        # klik di cat_tree / file_tree sync selection saja
+        self.cat_tree.bind("<ButtonRelease-1>",  self._on_file_click)
+        self.file_tree.bind("<ButtonRelease-1>", self._on_file_click)
+
+        # file_tree: warna teks netral untuk semua baris (warna kategori ada di cat_tree)
+        self.file_tree.tag_configure("row_even", background=BG3)
+        self.file_tree.tag_configure("row_odd",  background=BG4)
+        self.file_tree.tag_configure("checked",  background=ACCENT_DIM)
 
         # ── WGET PANEL ──
         self._wget_anchor = tk.Frame(content_main, bg=BG, height=1)
@@ -849,7 +1022,7 @@ class MTManager:
 
         dl_h, _ = make_pill_btn(row1, "\u2193 Download", self.wget_download,
                                  bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
-                                 font_size=9, padx=14, pady=7, radius=7)
+                                 font_size=10, padx=14, pady=7, radius=7)
         dl_h.pack(side="left")
 
         # Row 2: progress area
@@ -883,7 +1056,7 @@ class MTManager:
         Tooltip(cb, "Ekstrak otomatis jika file berupa ZIP/RAR/7Z", position="above")
 
         # ── STATUS BAR ──
-        tk.Frame(self.root, bg=BORDER, height=1).pack(fill="x", side="bottom")
+        tk.Frame(self.root, bg=BG, height=10).pack(fill="x", side="bottom")
         status_bar = tk.Frame(self.root, bg=BG2, height=28)
         status_bar.pack(fill="x", side="bottom")
         status_bar.pack_propagate(False)
@@ -895,6 +1068,52 @@ class MTManager:
 
         # Left dots + status items
         self._mk_status_item(sb_inner, "0 terminal",     ACCENT,  dot=True, varname="_term_count_var")
+
+        # Right side — Update button
+        update_c = tk.Canvas(sb_inner, bg=BG2, highlightthickness=0,
+                             height=10, cursor="hand2")
+        update_c.pack(side="right", padx=(0, 4))
+        self._update_canvas = update_c
+
+        def _draw_update_btn(hover=False):
+            update_c.delete("all")
+            w = update_c.winfo_width()
+            h = update_c.winfo_height()
+            if w < 4 or h < 4:
+                return
+            bg_c = "#1a3a2a" if hover else "#0f2a1e"
+            fg_c = ACCENT3
+            r = 5
+            pts = [r,0, w-r,0, w,0, w,r, w,h-r, w,h, w-r,h, r,h,
+                   0,h, 0,h-r, 0,r, 0,0, r,0]
+            update_c.create_polygon(pts, smooth=True, fill=bg_c, outline="")
+            _f = self._font
+            update_c.create_text(w//2, h//2, text="\u21ba  Update",
+                                 fill=fg_c, font=(_f, 10, "bold"))
+
+        def _update_enter(_): _draw_update_btn(hover=True)
+        def _update_leave(_): _draw_update_btn(hover=False)
+        def _run_update(_=None):
+            update_sh = Path.home() / "vfx" / "update.sh"
+            if not update_sh.exists():
+                messagebox.showerror("Update Gagal",
+                    f"Script tidak ditemukan:\n{update_sh}")
+                return
+            self._status("Menjalankan update...")
+            self._show_update_popup(update_sh)
+
+        update_c.bind("<Configure>", lambda e: _draw_update_btn())
+        update_c.bind("<Enter>",     _update_enter)
+        update_c.bind("<Leave>",     _update_leave)
+        update_c.bind("<Button-1>",  _run_update)
+        Tooltip(update_c, "Update MT Manager", position="above")
+
+        # measure and size the canvas
+        _f2 = self._font
+        _fnt2 = tkf.Font(family=_f2, size=11, weight="bold")
+        _rw = _fnt2.measure("\u21ba  Update") + 10 * 2
+        _rh = _fnt2.metrics("linespace") + 3 * 2
+        update_c.config(width=_rw, height=_rh)
 
     def _mk_status_item(self, parent, text, color, dot=False, icon=None,
                         side="left", varname=None):
@@ -940,18 +1159,127 @@ class MTManager:
         # Scroll diganti scroll-into-view ke wget entry
         self.wget_entry.focus_set()
 
-    def _install_menu(self):
-        """Custom popup dropdown - single click, no border, Linux-safe."""
+    # ── Update Popup ──────────────────────────────────────────────────────────
+    def _show_update_popup(self, update_sh):
+        """Jalankan update.sh, tampilkan hasil sederhana dengan opsi restart."""
+        import threading
         f = self._font
+
+        win = tk.Toplevel(self.root)
+        win.title("Update")
+        win.configure(bg=BG)
+        win.geometry("420x180")
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+
+        # Tengahkan relatif ke root
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 210
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 90
+        win.geometry(f"420x180+{rx}+{ry}")
+        win.deiconify()
+        win.update()
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+
+        body = tk.Frame(win, bg=BG, padx=28, pady=24)
+        body.pack(fill="both", expand=True)
+
+        icon_lbl = tk.Label(body, text="\u21ba", bg=BG, fg=ACCENT,
+                            font=(f, 22))
+        icon_lbl.grid(row=0, column=0, rowspan=2, padx=(0, 16), sticky="n")
+
+        msg_var = tk.StringVar(value="Memeriksa update...")
+        msg_lbl = tk.Label(body, textvariable=msg_var, bg=BG, fg=FG,
+                           font=(f, 11, "bold"), anchor="w", justify="left")
+        msg_lbl.grid(row=0, column=1, sticky="w")
+
+        sub_var = tk.StringVar(value="")
+        sub_lbl = tk.Label(body, textvariable=sub_var, bg=BG, fg=FG2,
+                           font=(f, 9), anchor="w", justify="left")
+        sub_lbl.grid(row=1, column=1, sticky="w", pady=(4, 0))
+
+        # Footer tombol — tersembunyi dulu
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=44)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        foot_inner = tk.Frame(foot, bg=BG2, padx=12)
+        foot_inner.pack(fill="both", expand=True)
+
+        # tombol OK (tutup saja)
+        ok_h, _ = make_pill_btn(foot_inner, "OK", win.destroy,
+                                 bg=BG3, fg=FG, hover_bg=BG4,
+                                 font_size=9, padx=20, pady=6, radius=7)
+
+        # tombol Restart (tutup + relaunch)
+        def _restart():
+            win.destroy()
+            import sys, os
+            python = sys.executable
+            os.execv(python, [python] + sys.argv)
+
+        restart_h, _ = make_pill_btn(foot_inner, "\u21bb  Restart Aplikasi", _restart,
+                                      bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
+                                      font_size=9, padx=20, pady=6, radius=7)
+
+        def _done(already_updated):
+            if already_updated:
+                icon_lbl.config(text="\u2713", fg=ACCENT3)
+                msg_var.set("Aplikasi sudah up-to-date.")
+                sub_var.set("Tidak ada perubahan baru.")
+                ok_h.pack(side="right", pady=8)
+            else:
+                icon_lbl.config(text="\u2713", fg=ACCENT3)
+                msg_var.set("Update berhasil!")
+                sub_var.set("Restart aplikasi untuk menerapkan perubahan.")
+                restart_h.pack(side="right", pady=8, padx=(0, 6))
+                ok_h.pack(side="right", pady=8)
+
+        def _fail(msg):
+            icon_lbl.config(text="\u2717", fg=DANGER)
+            msg_var.set("Update gagal.")
+            sub_var.set(msg[:72])
+            ok_h.pack(side="right", pady=8)
+
+        def _run():
+            try:
+                proc = subprocess.run(
+                    ["bash", str(update_sh)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                out = proc.stdout or ""
+                if proc.returncode != 0:
+                    err = out.strip().splitlines()[-1] if out.strip() else f"exit {proc.returncode}"
+                    win.after(0, _fail, err)
+                elif "already up to date" in out.lower():
+                    win.after(0, _done, True)
+                else:
+                    win.after(0, _done, False)
+            except Exception as e:
+                win.after(0, _fail, str(e))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+
+    def _install_menu(self):
+        """Dropdown menu install — popup ditutup SEBELUM yad dibuka."""
+        f = self._font
+
+        if getattr(self, "_install_popup_open", False):
+            return
+        self._install_popup_open = True
 
         popup = tk.Toplevel(self.root)
         popup.wm_overrideredirect(True)
         popup.attributes("-topmost", True)
 
-        # Outer border frame (1px BORDER2)
         outer = tk.Frame(popup, bg=BORDER2, padx=1, pady=1)
         outer.pack()
-
         inner = tk.Frame(outer, bg=BG3)
         inner.pack()
 
@@ -960,23 +1288,32 @@ class MTManager:
             ("\u2191  Install Indicator",       self.install_indicator),
         ]
 
+        _closed = [False]
+
+        def _close_popup():
+            if _closed[0]:
+                return
+            _closed[0] = True
+            self._install_popup_open = False
+            try:
+                popup.destroy()
+            except Exception:
+                pass
+
         def _make_item(text, cmd):
             row = tk.Frame(inner, bg=BG3, cursor="hand2")
             row.pack(fill="x")
             lbl = tk.Label(row, text=text, bg=BG3, fg=FG,
-                           font=(f, 10), anchor="w",
-                           padx=16, pady=8)
+                           font=(f, 10), anchor="w", padx=16, pady=8)
             lbl.pack(fill="x")
 
-            def _enter(_):
-                row.config(bg=BG4)
-                lbl.config(bg=BG4, fg=ACCENT)
-            def _leave(_):
-                row.config(bg=BG3)
-                lbl.config(bg=BG3, fg=FG)
+            def _enter(_): row.config(bg=BG4); lbl.config(bg=BG4, fg=ACCENT)
+            def _leave(_): row.config(bg=BG3); lbl.config(bg=BG3, fg=FG)
             def _click(_):
-                popup.destroy()
-                cmd()
+                # tutup dropdown DULU, baru buka yad — tidak ada overlap
+                _close_popup()
+                self.root.update()          # flush destroy ke X11
+                self.root.after(50, cmd)    # jalankan setelah frame berikutnya
 
             for w in (row, lbl):
                 w.bind("<Enter>",    _enter)
@@ -986,7 +1323,6 @@ class MTManager:
         for text, cmd in items:
             _make_item(text, cmd)
 
-        # Position below the Install button (aligned to button, not cursor)
         popup.update_idletasks()
         btn = self._install_btn_holder
         bx  = btn.winfo_rootx()
@@ -994,16 +1330,79 @@ class MTManager:
         bh  = btn.winfo_height()
         popup.wm_geometry(f"+{bx}+{by + bh + 2}")
 
-        # Close when clicking outside
-        popup.bind("<FocusOut>", lambda e: popup.destroy())
-        popup.focus_set()
+        # Tutup bila klik di luar area popup (di dalam jendela Tk)
+        def _on_press_outside(event):
+            if _closed[0]:
+                return
+            try:
+                wx = popup.winfo_rootx(); wy = popup.winfo_rooty()
+                ww = popup.winfo_width(); wh = popup.winfo_height()
+                if not (wx <= event.x_root <= wx + ww
+                        and wy <= event.y_root <= wy + wh):
+                    _close_popup()
+            except Exception:
+                _close_popup()
+
+        self.root.bind_all("<ButtonPress-1>", _on_press_outside, add=True)
+
+        # Tutup juga bila mouse bergerak jauh dari popup (fallback untuk klik
+        # ke window non-Tk seperti yad file picker)
+        def _poll():
+            if _closed[0]:
+                return
+            try:
+                mx = self.root.winfo_pointerx()
+                my = self.root.winfo_pointery()
+                wx = popup.winfo_rootx(); wy = popup.winfo_rooty()
+                ww = popup.winfo_width(); wh = popup.winfo_height()
+                # margin 80px — kalau pointer jauh dari popup, anggap sudah pindah
+                margin = 80
+                if not (wx - margin <= mx <= wx + ww + margin
+                        and wy - margin <= my <= wy + wh + margin):
+                    _close_popup()
+                    return
+                popup.after(150, _poll)
+            except Exception:
+                _close_popup()
+
+        popup.after(300, _poll)   # mulai poll 300ms setelah popup muncul
+
+        def _cleanup(_=None):
+            try:
+                self.root.unbind_all("<ButtonPress-1>")
+            except Exception:
+                pass
+            self._install_popup_open = False
+
+        popup.bind("<Destroy>", _cleanup)
 
     # ── Scrollbar proxies ──────────────────────────────────────────────────────
     def _term_yview(self, *args):
         self.term_tree.yview(*args)
 
     def _file_yview(self, *args):
+        """Scroll ketiga treeview (chk + cat + data) bersama."""
+        self.chk_tree.yview(*args)
+        self.cat_tree.yview(*args)
         self.file_tree.yview(*args)
+
+    def _on_file_scroll(self, first, last):
+        """Dipanggil saat file_tree scroll — sync chk_tree, cat_tree & scrollbar."""
+        self.chk_tree.yview_moveto(first)
+        self.cat_tree.yview_moveto(first)
+        self._sb_file.set(first, last)
+
+    def _on_chk_scroll(self, first, last):
+        """Dipanggil saat chk_tree scroll — sync cat_tree, file_tree & scrollbar."""
+        self.cat_tree.yview_moveto(first)
+        self.file_tree.yview_moveto(first)
+        self._sb_file.set(first, last)
+
+    def _on_cat_scroll(self, first, last):
+        """Dipanggil saat cat_tree scroll — sync chk_tree, file_tree & scrollbar."""
+        self.chk_tree.yview_moveto(first)
+        self.file_tree.yview_moveto(first)
+        self._sb_file.set(first, last)
 
     # ── Handlers ───────────────────────────────────────────────────────────────
     def _on_select(self, _=None):
@@ -1014,6 +1413,9 @@ class MTManager:
         # update info bar
         self._info_fields["terminal"][0].set(t["name"])
         self._info_fields["type"][0].set(t["type"])
+        # warna TYPE: MT4 = hijau (ACCENT3), MT5 = kuning (WARN)
+        type_color = ACCENT3 if t["type"] == "MT4" else WARN
+        self._info_fields["type"][1].config(fg=type_color)
         # truncate long path for display
         path_str = t["path"]
         home = str(Path.home())
@@ -1024,7 +1426,11 @@ class MTManager:
 
     def _reload_files(self, t):
         self.file_tree.delete(*self.file_tree.get_children())
-        import datetime
+        self.chk_tree.delete(*self.chk_tree.get_children())
+        self.cat_tree.delete(*self.cat_tree.get_children())
+        self._checked.clear()
+        self._all_checked = False
+        self.chk_tree.heading("chk", text=CHK_CHAR_OFF)
         row = 0
         for key, label in [("experts","Expert"),("indicators","Indicator"),
                             ("scripts","Script"),("logs","Log")]:
@@ -1033,15 +1439,26 @@ class MTManager:
                 for f in sorted(folder.iterdir()):
                     if not f.is_file():
                         continue
-                    kb = f.stat().st_size / 1024
+                    st = f.stat()
+                    kb = st.st_size / 1024
                     sz = f"{kb:.1f} KB" if kb < 1024 else f"{kb/1024:.2f} MB"
                     mtime = datetime.datetime.fromtimestamp(
-                        f.stat().st_mtime).strftime("%Y-%m-%d")
+                        st.st_mtime).strftime("%Y-%m-%d")
                     ext = f.suffix.lower()
                     stripe = "row_even" if row % 2 == 0 else "row_odd"
-                    self.file_tree.insert("", "end",
-                        values=(f.name, ext, label, sz, mtime),
+                    iid = f"row_{row}"
+                    # chk_tree: hanya kolom checkbox
+                    self.chk_tree.insert("", "end", iid=iid,
+                        values=(CHK_CHAR_OFF,),
+                        tags=(stripe,))
+                    # cat_tree: hanya kolom kategori, tag label untuk warna
+                    self.cat_tree.insert("", "end", iid=iid,
+                        values=(label,),
                         tags=(label, stripe))
+                    # file_tree: NAME, TYPE, SIZE, MODIFIED — tanpa cat
+                    self.file_tree.insert("", "end", iid=iid,
+                        values=(f.name, ext, sz, mtime),
+                        tags=(stripe,))
                     row += 1
 
     def _status(self, msg):
@@ -1053,32 +1470,93 @@ class MTManager:
             if not silent:
                 messagebox.showwarning("Perhatian", "Pilih terminal terlebih dahulu.")
             return None
-        idx = self.term_tree.index(sel[0])
-        # items include group-label rows (no terminal data); skip them
-        item = self.term_tree.item(sel[0])
+        iid = sel[0]
+        item = self.term_tree.item(iid)
         if "group" in item.get("tags", ()):
             if not silent:
                 messagebox.showwarning("Perhatian", "Pilih terminal, bukan grup.")
             return None
-        # map visible index to terminals list — skip group rows
-        t_idx = 0
-        for iid in self.term_tree.get_children():
-            tags = self.term_tree.item(iid, "tags")
-            if "group" in tags:
-                continue
-            if iid == sel[0]:
-                break
-            t_idx += 1
-        if t_idx >= len(self.terminals):
+        t = getattr(self, "_iid_to_terminal", {}).get(iid)
+        if t is None:
             return None
-        return self.terminals[t_idx]
+        return t
+
+    def _on_chk_click(self, event):
+        """Toggle checkbox saat klik di chk_tree."""
+        iid = self.chk_tree.identify_row(event.y)
+        if iid:
+            self._toggle_row(iid)
+
+    def _on_file_click(self, event):
+        """Sync selection dari file_tree / cat_tree ke semua tree."""
+        widget = event.widget
+        iid = widget.identify_row(event.y)
+        if iid:
+            self.chk_tree.selection_set(iid)
+            self.cat_tree.selection_set(iid)
+            self.file_tree.selection_set(iid)
+
+    def _toggle_row(self, iid):
+        if iid in self._checked:
+            self._checked.discard(iid)
+            self.chk_tree.set(iid, "chk", CHK_CHAR_OFF)
+            for tree in (self.chk_tree, self.cat_tree, self.file_tree):
+                tree.item(iid, tags=[t for t in tree.item(iid, "tags") if t != "checked"])
+        else:
+            self._checked.add(iid)
+            self.chk_tree.set(iid, "chk", CHK_CHAR_ON)
+            for tree in (self.chk_tree, self.cat_tree, self.file_tree):
+                tags = list(tree.item(iid, "tags"))
+                if "checked" not in tags:
+                    tags.append("checked")
+                tree.item(iid, tags=tags)
+        self._update_header_chk()
+
+    def _toggle_all(self):
+        all_iids = self.file_tree.get_children()
+        if not all_iids:
+            return
+        self._all_checked = not self._all_checked
+        new_char = CHK_CHAR_ON if self._all_checked else CHK_CHAR_OFF
+        self.chk_tree.heading("chk", text=new_char)
+        trees = (self.chk_tree, self.cat_tree, self.file_tree)
+        for i, iid in enumerate(all_iids):
+            if self._all_checked:
+                self._checked.add(iid)
+                self.chk_tree.set(iid, "chk", CHK_CHAR_ON)
+                for tree in trees:
+                    tags = list(tree.item(iid, "tags"))
+                    if "checked" not in tags:
+                        tags.append("checked")
+                    tree.item(iid, tags=tags)
+            else:
+                self._checked.discard(iid)
+                self.chk_tree.set(iid, "chk", CHK_CHAR_OFF)
+                for tree in trees:
+                    tree.item(iid, tags=[t for t in tree.item(iid, "tags") if t != "checked"])
+            # Flush UI setiap 50 baris agar tidak terasa freeze
+            if i % 50 == 49:
+                self.root.update_idletasks()
+
+    def _update_header_chk(self):
+        all_iids = self.file_tree.get_children()
+        if all_iids and len(self._checked) == len(all_iids):
+            self._all_checked = True
+            self.chk_tree.heading("chk", text=CHK_CHAR_ON)
+        else:
+            self._all_checked = False
+            self.chk_tree.heading("chk", text=CHK_CHAR_OFF)
 
     def _file_info(self):
         sel = self.file_tree.selection()
         if not sel:
             return None, None
-        v = self.file_tree.item(sel[0], "values")
-        return v[2], v[0]   # category, filename
+        iid = sel[0]
+        v   = self.file_tree.item(iid, "values")
+        # file_tree values: (name[0], type[1], size[2], modified[3])
+        # kategori diambil dari cat_tree
+        cat = self.cat_tree.item(iid, "values")[0] if self.cat_tree.exists(iid) else None
+        return cat, v[0]   # category, filename
 
     def _folder_for(self, t, label):
         return t.get({"Expert":"experts","Indicator":"indicators",
@@ -1114,9 +1592,52 @@ class MTManager:
         t = self._terminal()
         if not t:
             return
+
+        # --- multi-delete: use checked set if any are checked ---
+        if self._checked:
+            targets = []
+            for iid in list(self._checked):
+                try:
+                    v = self.file_tree.item(iid, "values")
+                    # file_tree values: (name[0], type[1], size[2], modified[3])
+                    fname = v[0]
+                    cat   = self.cat_tree.item(iid, "values")[0]
+                    path  = self._folder_for(t, cat) / fname
+                    targets.append((fname, path))
+                except Exception:
+                    pass
+            if not targets:
+                messagebox.showwarning("Perhatian", "File yang dipilih tidak valid.")
+                return
+            names_str = "\n".join(f"  • {n}" for n, _ in targets[:20])
+            if len(targets) > 20:
+                names_str += f"\n  ... dan {len(targets)-20} file lainnya"
+            if not messagebox.askyesno("Konfirmasi Hapus",
+                    f"Hapus {len(targets)} file berikut?\n\n{names_str}\n\n"
+                    "Tindakan ini tidak dapat dibatalkan."):
+                return
+            deleted, errors = 0, []
+            for fname, path in targets:
+                try:
+                    if path.exists():
+                        path.unlink(); deleted += 1
+                    else:
+                        errors.append(f"{fname}: tidak ditemukan")
+                except Exception as e:
+                    errors.append(f"{fname}: {e}")
+            self._reload_files(t)
+            msg = f"{deleted} file berhasil dihapus."
+            if errors:
+                msg += f"\n\nGagal ({len(errors)}):\n" + "\n".join(errors)
+            self._status(f"{deleted} file dihapus.")
+            messagebox.showinfo("Selesai", msg)
+            return
+
+        # --- single-delete: fallback to selected row ---
         cat, fname = self._file_info()
         if not fname:
-            messagebox.showwarning("Perhatian", "Pilih file dari tabel.")
+            messagebox.showwarning("Perhatian",
+                "Centang file yang ingin dihapus, atau pilih satu baris dari tabel.")
             return
         target = self._folder_for(t, cat) / fname
         if not target.exists():
@@ -1125,7 +1646,7 @@ class MTManager:
         if messagebox.askyesno("Konfirmasi Hapus", f"Hapus file ini?\n\n{target}"):
             target.unlink()
             self._reload_files(t)
-            self._status(f"'{fname}' dihapus.")
+            self._status(f"\'{fname}\' dihapus.")
 
     # ── Clear Logs ─────────────────────────────────────────────────────────────
     def clear_logs(self):
@@ -1200,47 +1721,57 @@ class MTManager:
         self.wget_status_var.set("Mengunduh\u2026")
         self._wget_pct_var.set("")
         self._progress.set(0.0)
-        self.root.update()
-        try:
-            result = subprocess.run(
-                ["wget", "-P", str(DOCS_DIR), "--content-disposition", url],
-                capture_output=True, text=True, timeout=120,
-            )
-            if result.returncode != 0:
-                err_lines = result.stderr.strip().splitlines()
-                err = err_lines[-1] if err_lines else "Unknown error"
-                self.wget_status_var.set(f"Gagal: {err[:55]}")
-                self._progress.set(0.0)
-                return
-            files_after = sorted(DOCS_DIR.iterdir(),
-                                  key=lambda f: f.stat().st_mtime, reverse=True)
-            downloaded = next((f for f in files_after if f.is_file()), None)
-            self.wget_var.set("")
-            self._progress.set(1.0)
-            self._wget_pct_var.set("100%")
-            if downloaded and self.auto_extract_var.get() and is_archive(downloaded):
-                self.wget_status_var.set(f"Mengekstrak {downloaded.name}\u2026")
-                self.root.update()
-                ok, msg = extract_file(downloaded, DOCS_DIR)
-                if ok:
-                    self.wget_status_var.set("Selesai + diekstrak \u2192 Documents/")
-                    self._status(f"wget + ekstrak selesai: {downloaded.name}")
-                    messagebox.showinfo("Selesai",
-                        f"File diunduh dan diekstrak ke:\n{DOCS_DIR}\n\nFile: {downloaded.name}")
-                else:
-                    self.wget_status_var.set("Unduh OK, ekstrak gagal.")
-                    messagebox.showwarning("Ekstrak Gagal",
-                        f"File berhasil diunduh ke {DOCS_DIR}\n\nTapi ekstrak gagal:\n{msg}")
-            else:
-                fname = downloaded.name if downloaded else ""
-                self.wget_status_var.set(f"Selesai \u2192 Documents/{fname}")
-                self._status(f"wget selesai \u2192 {DOCS_DIR}")
-                messagebox.showinfo("Download Selesai",
-                    f"File berhasil diunduh ke:\n{DOCS_DIR}")
-        except subprocess.TimeoutExpired:
-            self.wget_status_var.set("Timeout \u2014 >120 detik.")
-        except Exception as e:
-            self.wget_status_var.set(f"Error: {e}")
+
+        auto_extract = self.auto_extract_var.get()
+
+        def _run():
+            try:
+                result = subprocess.run(
+                    ["wget", "-P", str(DOCS_DIR), "--content-disposition", url],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode != 0:
+                    err_lines = result.stderr.strip().splitlines()
+                    err = err_lines[-1] if err_lines else "Unknown error"
+                    self.root.after(0, lambda: (
+                        self.wget_status_var.set(f"Gagal: {err[:55]}"),
+                        self._progress.set(0.0),
+                    ))
+                    return
+                files_after = sorted(DOCS_DIR.iterdir(),
+                                      key=lambda f: f.stat().st_mtime, reverse=True)
+                downloaded = next((f for f in files_after if f.is_file()), None)
+
+                def _finish():
+                    self.wget_var.set("")
+                    self._progress.set(1.0)
+                    self._wget_pct_var.set("100%")
+                    if downloaded and auto_extract and is_archive(downloaded):
+                        self.wget_status_var.set(f"Mengekstrak {downloaded.name}\u2026")
+                        ok, msg = extract_file(downloaded, DOCS_DIR)
+                        if ok:
+                            self.wget_status_var.set("Selesai + diekstrak \u2192 Documents/")
+                            self._status(f"wget + ekstrak selesai: {downloaded.name}")
+                            messagebox.showinfo("Selesai",
+                                f"File diunduh dan diekstrak ke:\n{DOCS_DIR}\n\nFile: {downloaded.name}")
+                        else:
+                            self.wget_status_var.set("Unduh OK, ekstrak gagal.")
+                            messagebox.showwarning("Ekstrak Gagal",
+                                f"File berhasil diunduh ke {DOCS_DIR}\n\nTapi ekstrak gagal:\n{msg}")
+                    else:
+                        fname = downloaded.name if downloaded else ""
+                        self.wget_status_var.set(f"Selesai \u2192 Documents/{fname}")
+                        self._status(f"wget selesai \u2192 {DOCS_DIR}")
+                        messagebox.showinfo("Download Selesai",
+                            f"File berhasil diunduh ke:\n{DOCS_DIR}")
+
+                self.root.after(0, _finish)
+            except subprocess.TimeoutExpired:
+                self.root.after(0, lambda: self.wget_status_var.set("Timeout \u2014 >120 detik."))
+            except Exception as e:
+                self.root.after(0, lambda: self.wget_status_var.set(f"Error: {e}"))
+
+        threading.Thread(target=_run, daemon=True).start()
 
     # ── Scan ───────────────────────────────────────────────────────────────────
     def scan_terminals(self):
@@ -1299,6 +1830,7 @@ class MTManager:
         # Insert into sidebar treeview with group headers
         f = self._font
         cur_type = None
+        self._iid_to_terminal = {}
         for item in self.terminals:
             if item["type"] != cur_type:
                 cur_type = item["type"]
@@ -1307,11 +1839,12 @@ class MTManager:
                     values=("", label, ""),
                     tags=("group",))
             badge = "MT4" if item["type"] == "MT4" else "MT5"
-            self.term_tree.insert("", "end",
+            iid = self.term_tree.insert("", "end",
                 values=("MT4" if item["type"] == "MT4" else "MT5",
                     item["name"],
                     item["type"]),
                 tags=(item["type"],))
+            self._iid_to_terminal[iid] = item
 
         n = len(self.terminals)
         if hasattr(self, "_term_count_var"):
