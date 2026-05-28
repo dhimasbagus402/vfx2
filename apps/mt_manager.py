@@ -534,7 +534,7 @@ class ProgressBar(tk.Canvas):
 class MTManager:
     def __init__(self, root):
         self.root = root
-        self.root.title("MetaTrader Manager 4")
+        self.root.title("MetaTrader Manager 3")
         self.root.geometry("1180x700")
         self.root.configure(bg=BG)
         self.root.resizable(True, True)
