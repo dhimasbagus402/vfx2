@@ -8,7 +8,7 @@ from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk, messagebox
-__version__ = "1.3"
+__version__ = "1.2"
 
 # ── Config file (persist settings antar sesi) ─────────────────────────────────
 CONFIG_PATH = Path.home() / ".config" / "mt_manager" / "settings.json"
