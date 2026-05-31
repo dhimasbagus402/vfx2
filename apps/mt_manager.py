@@ -1456,7 +1456,7 @@ class MTManager:
 
         else:
             # MT5: Uninstall.exe ada langsung di folder MT
-            candidate = terminal_path / "Uninstall.exe"
+            candidate = terminal_path / "uninstall.exe"
             if candidate.exists():
                 uninstall_exe = candidate
 
