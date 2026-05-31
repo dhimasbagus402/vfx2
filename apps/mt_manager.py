@@ -8,7 +8,7 @@ from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk, messagebox
-__version__ = "1.32"
+__version__ = "1.2"
 
 # ── Config file (persist settings antar sesi) ─────────────────────────────────
 CONFIG_PATH = Path.home() / ".config" / "mt_manager" / "settings.json"
@@ -565,10 +565,10 @@ class MTManager:
         self._cfg        = _load_config()
         self._build_styles()
         self._build_ui()
-        self.scan_terminals()
+        self.scan_terminals(silent=True)   # startup: tanpa popup "Scan Selesai"
         # Auto-update: jalankan di background setelah UI siap
         if self.auto_update_var.get():
-            self.root.after(5500, self._auto_update_check)
+            self.root.after(800, self._auto_update_check)
 
     # ── Styles ─────────────────────────────────────────────────────────────────
     def _build_styles(self):
@@ -1364,10 +1364,9 @@ class MTManager:
         rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 200
         ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 80
         win.geometry(f"400x160+{rx}+{ry}")
-        try:
-            win.grab_set()
-        except Exception:
-            pass
+        win.deiconify()
+        win.lift()
+        win.focus_force()
 
         body = tk.Frame(win, bg=BG, padx=28, pady=20)
         body.pack(fill="both", expand=True)
@@ -1911,7 +1910,7 @@ class MTManager:
         threading.Thread(target=_run, daemon=True).start()
 
     # ── Scan ───────────────────────────────────────────────────────────────────
-    def scan_terminals(self):
+    def scan_terminals(self, silent=False):
         self.term_tree.delete(*self.term_tree.get_children())
         self.file_tree.delete(*self.file_tree.get_children())
         self.terminals.clear()
@@ -1987,7 +1986,8 @@ class MTManager:
         if hasattr(self, "_term_count_var"):
             self._term_count_var.set(f"{n} terminal terdeteksi")
         self._status(f"{n} terminal ditemukan.")
-        messagebox.showinfo("Scan Selesai", f"Ditemukan {n} instalasi MetaTrader.")
+        if not silent:
+            messagebox.showinfo("Scan Selesai", f"Ditemukan {n} instalasi MetaTrader.")
 
 
 if __name__ == "__main__":
