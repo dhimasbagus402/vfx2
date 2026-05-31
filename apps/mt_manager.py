@@ -799,6 +799,26 @@ class MTManager:
         h4.pack(side="left", pady=8, padx=2)
         Tooltip(c4, "Hapus EA atau Indikator pada MT")
 
+        # Separator
+        tk.Frame(tb, bg=BORDER2, width=1).pack(side="left", fill="y", padx=6, pady=8)
+
+        # Uninstall EA (jalankan Uninstall.exe MT)
+        h5, c5 = make_pill_btn(tb, "\u26d4 Uninstall EA", self.uninstall_ea_exe,
+                               bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
+                               font_size=10, padx=12, pady=7, radius=10)
+        h5.pack(side="left", pady=8, padx=2)
+        Tooltip(c5, "Jalankan Uninstall.exe pada folder instalasi MT")
+
+        # Separator
+        tk.Frame(tb, bg=BORDER2, width=1).pack(side="left", fill="y", padx=6, pady=8)
+
+        # Open MT (jalankan terminal.exe / terminal64.exe)
+        h6, c6 = make_pill_btn(tb, "\u25b6 Open MT", self.open_mt,
+                               bg="#0d2200", fg="#5ecf3e", hover_bg="#1a3a00",
+                               font_size=10, padx=12, pady=7, radius=10)
+        h6.pack(side="left", pady=8, padx=2)
+        Tooltip(c6, "Jalankan terminal MT yang dipilih")
+
 
         # ── CONTENT AREA (no scroll canvas — table fills remaining space) ──
         content_main = tk.Frame(main, bg=BG)
@@ -1401,6 +1421,236 @@ class MTManager:
         ok_h.pack(side="right", pady=8)
 
         self._status("Update baru tersedia — restart untuk menerapkan.")
+
+    # ── Uninstall EA (jalankan Uninstall.exe) ─────────────────────────────────
+    def uninstall_ea_exe(self):
+        t = self._terminal()
+        if not t:
+            return
+
+        terminal_path = Path(t["path"])
+        uninstall_exe = None
+
+        if t["type"] == "MT4":
+            # MT4: baca origin.txt untuk dapat path instalasi asli
+            origin_file = terminal_path / "origin.txt"
+            if not origin_file.exists():
+                messagebox.showerror(
+                    "origin.txt tidak ditemukan",
+                    f"File origin.txt tidak ada di:\n{terminal_path}\n\n"
+                    "Tidak dapat menentukan lokasi Uninstall.exe."
+                )
+                return
+            try:
+                raw = origin_file.read_bytes().decode("utf-16", errors="ignore").strip()
+                # origin.txt berisi path Windows, contoh:
+                # C:\Program Files (x86)\BrokerName MT4\
+                # Konversi ke path wine: drive_c/Program Files (x86)/...
+                win_path = raw.replace("\\", "/").strip("/")
+                # Hapus drive letter (misal "C:/")
+                if len(win_path) >= 2 and win_path[1] == ":":
+                    win_path = win_path[3:]  # buang "C:/"
+                # Cari base wine prefix
+                home = Path.home()
+                wine_roots = [
+                    home / ".wine" / "drive_c",
+                    home / "Games" / "drive_c",
+                ]
+                for wine_c in wine_roots:
+                    candidate = wine_c / win_path / "Uninstall.exe"
+                    if candidate.exists():
+                        uninstall_exe = candidate
+                        break
+                if uninstall_exe is None:
+                    # Fallback: coba langsung di folder terminal
+                    candidate = terminal_path / "Uninstall.exe"
+                    if candidate.exists():
+                        uninstall_exe = candidate
+            except Exception as e:
+                messagebox.showerror("Gagal membaca origin.txt", str(e))
+                return
+
+        else:
+            # MT5: Uninstall.exe ada langsung di folder MT
+            candidate = terminal_path / "Uninstall.exe"
+            if candidate.exists():
+                uninstall_exe = candidate
+
+        if uninstall_exe is None:
+            messagebox.showerror(
+                "Uninstall.exe tidak ditemukan",
+                f"File Uninstall.exe tidak dapat ditemukan untuk terminal:\n"
+                f"{t['name']} ({t['type']})\n\n"
+                f"Folder yang diperiksa:\n{terminal_path}"
+            )
+            return
+
+        # ── Konfirmasi popup custom ──────────────────────────────────────────
+        f = self._font
+        win = tk.Toplevel(self.root)
+        win.title("Konfirmasi Uninstall EA")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.update_idletasks()
+
+        body = tk.Frame(win, bg=BG, padx=28, pady=22)
+        body.pack(fill="both", expand=True)
+
+        # Icon + judul
+        hdr = tk.Frame(body, bg=BG)
+        hdr.pack(fill="x", pady=(0, 14))
+        tk.Label(hdr, text="⚠", bg=BG, fg="#e07b00",
+                 font=(f, 22)).pack(side="left", padx=(0, 14))
+        title_col = tk.Frame(hdr, bg=BG)
+        title_col.pack(side="left", fill="x", expand=True)
+        tk.Label(title_col, text="Uninstall EA",
+                 bg=BG, fg=FG, font=(f, 12, "bold"), anchor="w").pack(anchor="w")
+        tk.Label(title_col, text=f"{t['name']}  ·  {t['type']}",
+                 bg=BG, fg=FG3, font=(f, 9), anchor="w").pack(anchor="w")
+
+        # Info path
+        info_box = tk.Frame(body, bg=BG3, padx=12, pady=10)
+        info_box.pack(fill="x", pady=(0, 14))
+        tk.Label(info_box, text="FILE", bg=BG3, fg=FG3,
+                 font=(f, 8), anchor="w").pack(anchor="w")
+        exe_path_str = str(uninstall_exe)
+        home_str = str(Path.home())
+        if exe_path_str.startswith(home_str):
+            exe_path_str = "~" + exe_path_str[len(home_str):]
+        tk.Label(info_box, text=exe_path_str, bg=BG3, fg=ACCENT2,
+                 font=(self._font_mono, 9), anchor="w",
+                 wraplength=420, justify="left").pack(anchor="w")
+
+        tk.Label(body,
+                 text="Proses uninstall akan dijalankan via Wine.\n"
+                      "Pastikan terminal MetaTrader sudah ditutup sebelum melanjutkan.",
+                 bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w",
+                 wraplength=440).pack(anchor="w", pady=(0, 4))
+
+        # Footer tombol
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=48)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12)
+        fi.pack(fill="both", expand=True)
+
+        def _run_uninstall():
+            win.destroy()
+            self._status(f"Menjalankan Uninstall.exe untuk {t['name']}…")
+            exe_str = str(uninstall_exe)
+            def _do():
+                try:
+                    subprocess.Popen(
+                        ["wine", exe_str],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    self.root.after(0, lambda: self._status(
+                        f"Uninstall.exe {t['name']} telah dijalankan."))
+                except FileNotFoundError:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Wine tidak ditemukan",
+                        "Perintah 'wine' tidak tersedia.\n"
+                        "Install wine terlebih dahulu:\n  sudo apt install wine"
+                    ))
+                except Exception as e:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Gagal", f"Tidak dapat menjalankan Uninstall.exe:\n{e}"))
+            threading.Thread(target=_do, daemon=True).start()
+
+        run_h, _ = make_pill_btn(fi, "⚠  Lanjutkan Uninstall", _run_uninstall,
+                                 bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
+                                 font_size=9, padx=20, pady=6, radius=7)
+        run_h.pack(side="right", pady=8, padx=(0, 6))
+
+        cancel_h, _ = make_pill_btn(fi, "Batal", win.destroy,
+                                    bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - win.winfo_reqwidth()  // 2
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - win.winfo_reqheight() // 2
+        win.geometry(f"+{rx}+{ry}")
+        win.deiconify()
+        win.lift()
+        win.focus_force()
+
+    # ── Open MT (jalankan terminal.exe / terminal64.exe) ──────────────────────
+    def open_mt(self):
+        t = self._terminal()
+        if not t:
+            return
+
+        terminal_path = Path(t["path"])
+        exe_path = None
+
+        if t["type"] == "MT5":
+            # MT5: terminal64.exe ada langsung di folder MT
+            candidate = terminal_path / "terminal64.exe"
+            if candidate.exists():
+                exe_path = candidate
+
+        else:
+            # MT4: folder di AppData, baca origin.txt untuk path instalasi asli
+            origin_file = terminal_path / "origin.txt"
+            if origin_file.exists():
+                try:
+                    raw = origin_file.read_bytes().decode("utf-16", errors="ignore").strip()
+                    win_path = raw.replace("\\", "/").strip("/")
+                    if len(win_path) >= 2 and win_path[1] == ":":
+                        win_path = win_path[3:]  # buang "C:/"
+                    home = Path.home()
+                    for wine_c in [home / ".wine" / "drive_c",
+                                   home / "Games" / "drive_c"]:
+                        candidate = wine_c / win_path / "terminal.exe"
+                        if candidate.exists():
+                            exe_path = candidate
+                            break
+                except Exception as e:
+                    messagebox.showerror("Gagal membaca origin.txt", str(e))
+                    return
+
+            if exe_path is None:
+                # Fallback: coba langsung di folder terminal
+                candidate = terminal_path / "terminal.exe"
+                if candidate.exists():
+                    exe_path = candidate
+
+        if exe_path is None:
+            exe_name = "terminal64.exe" if t["type"] == "MT5" else "terminal.exe"
+            messagebox.showerror(
+                f"{exe_name} tidak ditemukan",
+                f"File {exe_name} tidak dapat ditemukan untuk terminal:\n"
+                f"{t['name']} ({t['type']})\n\n"
+                f"Folder yang diperiksa:\n{terminal_path}"
+            )
+            return
+
+        self._status(f"Membuka {t['name']} ({t['type']})…")
+
+        def _do():
+            try:
+                subprocess.Popen(
+                    ["wine", str(exe_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self.root.after(0, lambda: self._status(
+                    f"{t['name']} ({t['type']}) sedang dibuka."))
+            except FileNotFoundError:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Wine tidak ditemukan",
+                    "Perintah 'wine' tidak tersedia.\n"
+                    "Install wine terlebih dahulu:\n  sudo apt install wine"
+                ))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Gagal", f"Tidak dapat membuka terminal:\n{e}"))
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _install_menu(self):
         """Dropdown menu install — popup ditutup SEBELUM yad dibuka."""
