@@ -1463,7 +1463,7 @@ class MTManager:
                         break
                 if uninstall_exe is None:
                     # Fallback: coba langsung di folder terminal
-                    candidate = terminal_path / "Uninstall.exe"
+                    candidate = terminal_path / "uinstall.exe"
                     if candidate.exists():
                         uninstall_exe = candidate
             except Exception as e:
@@ -1472,7 +1472,7 @@ class MTManager:
 
         else:
             # MT5: Uninstall.exe ada langsung di folder MT
-            candidate = terminal_path / "Uninstall.exe"
+            candidate = terminal_path / "uninstall.exe"
             if candidate.exists():
                 uninstall_exe = candidate
 
