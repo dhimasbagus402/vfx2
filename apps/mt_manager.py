@@ -1435,12 +1435,12 @@ class MTManager:
             # Gunakan install_path yang sudah diparse saat scan
             install_path = t.get("install_path")
             if install_path:
-                candidate = Path(install_path) / "Uninstall.exe"
+                candidate = Path(install_path) / "uninstall.exe"
                 if candidate.exists():
                     uninstall_exe = candidate
             if uninstall_exe is None:
                 # Fallback: coba di folder AppData terminal
-                candidate = terminal_path / "Uninstall.exe"
+                candidate = terminal_path / "uninstall.exe"
                 if candidate.exists():
                     uninstall_exe = candidate
             if uninstall_exe is None:
