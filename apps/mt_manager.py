@@ -49,21 +49,7 @@ FG3         = "#8590a6"   # --text3
 WHITE       = "#ffffff"
 PURPLE      = "#a78bfa"
 
-# Legacy aliases (button hovers)
-GREEN       = ACCENT
-GREEN_LIGHT = ACCENT_DIM
-ORANGE      = WARN
-ORANGE_LIGHT= "#2e1e05"
-RED         = DANGER
-RED_LIGHT   = "#2e0d0d"
-YELLOW      = WARN
-YELLOW_LIGHT= "#2e1e05"
-BLUE        = ACCENT2
-BLUE_LIGHT  = ACCENT_DIM
-BLUE_DARK   = "#007acc"
-CARD        = BG3
-CARD2       = BG4
-SIDEBAR_BG  = BG2
+# (legacy colour aliases removed)
 
 ALLOWED_ROOT = Path.home()
 DOCS_DIR     = Path.home() / "Documents"
@@ -136,6 +122,13 @@ class RoundedBox(tk.Canvas):
         self.bind("<Configure>", self._redraw)
 
     def _redraw(self, _=None):
+        # Debounce: batalkan jadwal sebelumnya, jadwal ulang 8ms kemudian
+        if hasattr(self, "_redraw_id") and self._redraw_id:
+            self.after_cancel(self._redraw_id)
+        self._redraw_id = self.after(8, self._do_redraw)
+
+    def _do_redraw(self):
+        self._redraw_id = None
         self.delete("rr")
         w, h = self.winfo_width(), self.winfo_height()
         if w < 4 or h < 4:
@@ -536,14 +529,18 @@ class ProgressBar(tk.Canvas):
         self._redraw()
 
     def _redraw(self, _=None):
+        if hasattr(self, "_redraw_id") and self._redraw_id:
+            self.after_cancel(self._redraw_id)
+        self._redraw_id = self.after(16, self._do_redraw)
+
+    def _do_redraw(self):
+        self._redraw_id = None
         self.delete("all")
         w = self.winfo_width()
         h = self.winfo_height()
         if w < 2:
             return
-        # track
         self.create_rectangle(0, 0, w, h, fill=self._track, outline="")
-        # fill
         fw = int(w * self._pct)
         if fw > 0:
             self.create_rectangle(0, 0, fw, h, fill=self._fill, outline="")
@@ -1235,14 +1232,9 @@ class MTManager:
         c.create_text(w//2, h//2, text="\u25ce  Scan Metatrader",
                       fill=ACCENT, font=(_f, 9, "bold"))
 
-    def _scroll_to_wget(self):
-        # Scroll diganti scroll-into-view ke wget entry
-        self.wget_entry.focus_set()
-
     # ── Update Popup ──────────────────────────────────────────────────────────
     def _show_update_popup(self, update_sh):
         """Jalankan update.sh, tampilkan hasil sederhana dengan opsi restart."""
-        import threading
         f = self._font
 
         win = tk.Toplevel(self.root)
@@ -1429,6 +1421,40 @@ class MTManager:
 
         self._status("Update baru tersedia — restart untuk menerapkan.")
 
+    # ── Shared helpers: resolve exe path & wine launcher ─────────────────────
+    def _find_exe(self, t: dict, mt4_name: str, mt5_name: str):
+        """Cari file exe untuk terminal t.  MT4 pakai install_path, MT5 pakai path langsung."""
+        tp = Path(t["path"])
+        if t["type"] == "MT5":
+            c = tp / mt5_name
+            return c if c.exists() else None
+        # MT4
+        ip = t.get("install_path")
+        if ip:
+            c = Path(ip) / mt4_name
+            if c.exists():
+                return c
+        c = tp / mt4_name   # fallback AppData
+        return c if c.exists() else None
+
+    def _wine_launch(self, exe_path, label: str):
+        """Jalankan exe_path via wine di background thread."""
+        self._status(f"Membuka {label}…")
+        def _do():
+            try:
+                subprocess.Popen(["wine", str(exe_path)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.root.after(0, lambda: self._status(f"{label} sedang dibuka."))
+            except FileNotFoundError:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Wine tidak ditemukan",
+                    "Perintah 'wine' tidak tersedia.\n"
+                    "Install wine terlebih dahulu:\n  sudo apt install wine"))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Gagal", f"Tidak dapat membuka {label}:\n{e}"))
+        threading.Thread(target=_do, daemon=True).start()
+
     # ── Uninstall MT (jalankan Uninstall.exe) ─────────────────────────────────
     def uninstall_ea_exe(self):
         t = self._terminal()
@@ -1529,27 +1555,7 @@ class MTManager:
 
         def _run_uninstall():
             win.destroy()
-            self._status(f"Menjalankan Uninstall.exe untuk {t['name']}…")
-            exe_str = str(uninstall_exe)
-            def _do():
-                try:
-                    subprocess.Popen(
-                        ["wine", exe_str],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    self.root.after(0, lambda: self._status(
-                        f"Uninstall.exe {t['name']} telah dijalankan."))
-                except FileNotFoundError:
-                    self.root.after(0, lambda: messagebox.showerror(
-                        "Wine tidak ditemukan",
-                        "Perintah 'wine' tidak tersedia.\n"
-                        "Install wine terlebih dahulu:\n  sudo apt install wine"
-                    ))
-                except Exception as e:
-                    self.root.after(0, lambda: messagebox.showerror(
-                        "Gagal", f"Tidak dapat menjalankan Uninstall.exe:\n{e}"))
-            threading.Thread(target=_do, daemon=True).start()
+            self._wine_launch(uninstall_exe, f"Uninstall {t['name']}({t['type']})")
 
         run_h, _ = make_pill_btn(fi, "⚠  Lanjutkan Uninstall", _run_uninstall,
                                  bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
@@ -1574,122 +1580,28 @@ class MTManager:
         t = self._terminal()
         if not t:
             return
-
-        terminal_path = Path(t["path"])
-        exe_path = None
-
-        if t["type"] == "MT5":
-            # MT5: terminal64.exe ada langsung di folder MT
-            candidate = terminal_path / "terminal64.exe"
-            if candidate.exists():
-                exe_path = candidate
-
-        else:
-            # MT4: gunakan install_path yang sudah diparse saat scan
-            install_path = t.get("install_path")
-            if install_path:
-                candidate = Path(install_path) / "terminal.exe"
-                if candidate.exists():
-                    exe_path = candidate
-            if exe_path is None:
-                # Fallback: coba langsung di folder AppData terminal
-                candidate = terminal_path / "terminal.exe"
-                if candidate.exists():
-                    exe_path = candidate
-
-        if exe_path is None:
-            exe_name = "terminal64.exe" if t["type"] == "MT5" else "terminal.exe"
-            messagebox.showerror(
-                f"{exe_name} tidak ditemukan",
-                f"File {exe_name} tidak dapat ditemukan untuk terminal:\n"
-                f"{t['name']} ({t['type']})\n\n"
-                f"Folder yang diperiksa:\n{terminal_path}"
-            )
+        exe = self._find_exe(t, "terminal.exe", "terminal64.exe")
+        if exe is None:
+            name = "terminal64.exe" if t["type"] == "MT5" else "terminal.exe"
+            messagebox.showerror(f"{name} tidak ditemukan",
+                f"File {name} tidak ditemukan untuk {t['name']} ({t['type']})\n"
+                f"Folder: {t['path']}")
             return
-
-        self._status(f"Membuka {t['name']} ({t['type']})…")
-
-        def _do():
-            try:
-                subprocess.Popen(
-                    ["wine", str(exe_path)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                self.root.after(0, lambda: self._status(
-                    f"{t['name']} ({t['type']}) sedang dibuka."))
-            except FileNotFoundError:
-                self.root.after(0, lambda: messagebox.showerror(
-                    "Wine tidak ditemukan",
-                    "Perintah 'wine' tidak tersedia.\n"
-                    "Install wine terlebih dahulu:\n  sudo apt install wine"
-                ))
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror(
-                    "Gagal", f"Tidak dapat membuka terminal:\n{e}"))
-
-        threading.Thread(target=_do, daemon=True).start()
+        self._wine_launch(exe, f"{t['name']} ({t['type']})")
 
     # ── Open MetaEditor ────────────────────────────────────────────────────────
     def open_metaeditor(self):
         t = self._terminal()
         if not t:
             return
-
-        terminal_path = Path(t["path"])
-        exe_path = None
-
-        if t["type"] == "MT5":
-            # MT5: MetaEditor64.exe ada langsung di folder MT
-            candidate = terminal_path / "MetaEditor64.exe"
-            if candidate.exists():
-                exe_path = candidate
-
-        else:
-            # MT4: gunakan install_path yang sudah diparse saat scan
-            install_path = t.get("install_path")
-            if install_path:
-                candidate = Path(install_path) / "metaeditor.exe"
-                if candidate.exists():
-                    exe_path = candidate
-            if exe_path is None:
-                # Fallback: coba di folder AppData terminal
-                candidate = terminal_path / "metaeditor.exe"
-                if candidate.exists():
-                    exe_path = candidate
-
-        if exe_path is None:
-            exe_name = "MetaEditor64.exe" if t["type"] == "MT5" else "metaeditor.exe"
-            messagebox.showerror(
-                f"{exe_name} tidak ditemukan",
-                f"File {exe_name} tidak dapat ditemukan untuk terminal:\n"
-                f"{t['name']} ({t['type']})\n\n"
-                f"Folder yang diperiksa:\n{terminal_path}"
-            )
+        exe = self._find_exe(t, "metaeditor.exe", "MetaEditor64.exe")
+        if exe is None:
+            name = "MetaEditor64.exe" if t["type"] == "MT5" else "metaeditor.exe"
+            messagebox.showerror(f"{name} tidak ditemukan",
+                f"File {name} tidak ditemukan untuk {t['name']} ({t['type']})\n"
+                f"Folder: {t['path']}")
             return
-
-        self._status(f"Membuka MetaEditor {t['name']} ({t['type']})…")
-
-        def _do():
-            try:
-                subprocess.Popen(
-                    ["wine", str(exe_path)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                self.root.after(0, lambda: self._status(
-                    f"MetaEditor {t['name']} ({t['type']}) sedang dibuka."))
-            except FileNotFoundError:
-                self.root.after(0, lambda: messagebox.showerror(
-                    "Wine tidak ditemukan",
-                    "Perintah 'wine' tidak tersedia.\n"
-                    "Install wine terlebih dahulu:\n  sudo apt install wine"
-                ))
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror(
-                    "Gagal", f"Tidak dapat membuka MetaEditor:\n{e}"))
-
-        threading.Thread(target=_do, daemon=True).start()
+        self._wine_launch(exe, f"MetaEditor {t['name']} ({t['type']})")
 
     def _install_menu(self):
         """Dropdown menu install — popup ditutup SEBELUM yad dibuka."""
@@ -1811,23 +1723,18 @@ class MTManager:
         self.cat_tree.yview(*args)
         self.file_tree.yview(*args)
 
-    def _on_file_scroll(self, first, last):
-        """Dipanggil saat file_tree scroll — sync chk_tree, cat_tree & scrollbar."""
+    def _on_any_scroll(self, first, last):
+        """Dipanggil saat salah satu treeview scroll — sync semua + scrollbar."""
+        first = float(first)
         self.chk_tree.yview_moveto(first)
-        self.cat_tree.yview_moveto(first)
-        self._sb_file.set(first, last)
-
-    def _on_chk_scroll(self, first, last):
-        """Dipanggil saat chk_tree scroll — sync cat_tree, file_tree & scrollbar."""
         self.cat_tree.yview_moveto(first)
         self.file_tree.yview_moveto(first)
         self._sb_file.set(first, last)
 
-    def _on_cat_scroll(self, first, last):
-        """Dipanggil saat cat_tree scroll — sync chk_tree, file_tree & scrollbar."""
-        self.chk_tree.yview_moveto(first)
-        self.file_tree.yview_moveto(first)
-        self._sb_file.set(first, last)
+    # aliases agar binding lama tetap valid
+    _on_file_scroll = _on_any_scroll
+    _on_chk_scroll  = _on_any_scroll
+    _on_cat_scroll  = _on_any_scroll
 
     # ── Handlers ───────────────────────────────────────────────────────────────
     def _on_select(self, _=None):
@@ -1850,41 +1757,45 @@ class MTManager:
         self._status(f"Path: {t['path']}")
 
     def _reload_files(self, t):
-        self.file_tree.delete(*self.file_tree.get_children())
-        self.chk_tree.delete(*self.chk_tree.get_children())
-        self.cat_tree.delete(*self.cat_tree.get_children())
+        # Hapus semua baris sekaligus — lebih cepat daripada delete per-iid
+        for tree in (self.chk_tree, self.cat_tree, self.file_tree):
+            tree.delete(*tree.get_children())
         self._checked.clear()
         self._all_checked = False
         self.chk_tree.heading("chk", text=CHK_CHAR_OFF)
+        _fmt_date = datetime.datetime.fromtimestamp
         row = 0
-        for key, label in [("experts","Expert"),("indicators","Indicator"),
-                            ("scripts","Script"),("logs","Log")]:
+        for key, label in (("experts","Expert"),("indicators","Indicator"),
+                            ("scripts","Script"),("logs","Log")):
             folder = t.get(key)
-            if folder and folder.exists():
-                for f in sorted(folder.iterdir()):
-                    if not f.is_file():
-                        continue
+            if not (folder and folder.exists()):
+                continue
+            # Satu os.scandir — lebih cepat dari iterdir() + stat per file
+            try:
+                entries = sorted(
+                    (e for e in folder.iterdir() if e.is_file()),
+                    key=lambda e: e.name
+                )
+            except OSError:
+                continue
+            for f in entries:
+                try:
                     st = f.stat()
-                    kb = st.st_size / 1024
-                    sz = f"{kb:.1f} KB" if kb < 1024 else f"{kb/1024:.2f} MB"
-                    mtime = datetime.datetime.fromtimestamp(
-                        st.st_mtime).strftime("%Y-%m-%d")
-                    ext = f.suffix.lower()
-                    stripe = "row_even" if row % 2 == 0 else "row_odd"
-                    iid = f"row_{row}"
-                    # chk_tree: hanya kolom checkbox
-                    self.chk_tree.insert("", "end", iid=iid,
-                        values=(CHK_CHAR_OFF,),
-                        tags=(stripe,))
-                    # cat_tree: hanya kolom kategori, tag label untuk warna
-                    self.cat_tree.insert("", "end", iid=iid,
-                        values=(label,),
-                        tags=(label, stripe))
-                    # file_tree: NAME, TYPE, SIZE, MODIFIED — tanpa cat
-                    self.file_tree.insert("", "end", iid=iid,
-                        values=(f.name, ext, sz, mtime),
-                        tags=(stripe,))
-                    row += 1
+                except OSError:
+                    continue
+                kb = st.st_size / 1024
+                sz = f"{kb:.1f} KB" if kb < 1024 else f"{kb/1024:.2f} MB"
+                mtime = _fmt_date(st.st_mtime).strftime("%Y-%m-%d")
+                stripe = "row_even" if row % 2 == 0 else "row_odd"
+                iid = f"r{row}"
+                self.chk_tree.insert("", "end", iid=iid,
+                    values=(CHK_CHAR_OFF,), tags=(stripe,))
+                self.cat_tree.insert("", "end", iid=iid,
+                    values=(label,), tags=(label, stripe))
+                self.file_tree.insert("", "end", iid=iid,
+                    values=(f.name, f.suffix.lower(), sz, mtime),
+                    tags=(stripe,))
+                row += 1
 
     def _status(self, msg):
         self.status_var.set(msg)
@@ -1922,19 +1833,19 @@ class MTManager:
             self.file_tree.selection_set(iid)
 
     def _toggle_row(self, iid):
+        trees = (self.chk_tree, self.cat_tree, self.file_tree)
         if iid in self._checked:
             self._checked.discard(iid)
             self.chk_tree.set(iid, "chk", CHK_CHAR_OFF)
-            for tree in (self.chk_tree, self.cat_tree, self.file_tree):
-                tree.item(iid, tags=[t for t in tree.item(iid, "tags") if t != "checked"])
+            for tree in trees:
+                tree.item(iid, tags=[tg for tg in tree.item(iid, "tags") if tg != "checked"])
         else:
             self._checked.add(iid)
             self.chk_tree.set(iid, "chk", CHK_CHAR_ON)
-            for tree in (self.chk_tree, self.cat_tree, self.file_tree):
-                tags = list(tree.item(iid, "tags"))
-                if "checked" not in tags:
-                    tags.append("checked")
-                tree.item(iid, tags=tags)
+            for tree in trees:
+                cur = tree.item(iid, "tags")
+                if "checked" not in cur:
+                    tree.item(iid, tags=(*cur, "checked"))
         self._update_header_chk()
 
     def _toggle_all(self):
@@ -1942,26 +1853,26 @@ class MTManager:
         if not all_iids:
             return
         self._all_checked = not self._all_checked
-        new_char = CHK_CHAR_ON if self._all_checked else CHK_CHAR_OFF
-        self.chk_tree.heading("chk", text=new_char)
+        self.chk_tree.heading("chk", text=CHK_CHAR_ON if self._all_checked else CHK_CHAR_OFF)
         trees = (self.chk_tree, self.cat_tree, self.file_tree)
-        for i, iid in enumerate(all_iids):
-            if self._all_checked:
-                self._checked.add(iid)
+        if self._all_checked:
+            self._checked = set(all_iids)
+            for i, iid in enumerate(all_iids):
                 self.chk_tree.set(iid, "chk", CHK_CHAR_ON)
                 for tree in trees:
-                    tags = list(tree.item(iid, "tags"))
-                    if "checked" not in tags:
-                        tags.append("checked")
-                    tree.item(iid, tags=tags)
-            else:
-                self._checked.discard(iid)
+                    cur = tree.item(iid, "tags")
+                    if "checked" not in cur:
+                        tree.item(iid, tags=(*cur, "checked"))
+                if i % 60 == 59:
+                    self.root.update_idletasks()
+        else:
+            self._checked.clear()
+            for i, iid in enumerate(all_iids):
                 self.chk_tree.set(iid, "chk", CHK_CHAR_OFF)
                 for tree in trees:
-                    tree.item(iid, tags=[t for t in tree.item(iid, "tags") if t != "checked"])
-            # Flush UI setiap 50 baris agar tidak terasa freeze
-            if i % 50 == 49:
-                self.root.update_idletasks()
+                    tree.item(iid, tags=[tg for tg in tree.item(iid, "tags") if tg != "checked"])
+                if i % 60 == 59:
+                    self.root.update_idletasks()
 
     def _update_header_chk(self):
         all_iids = self.file_tree.get_children()
