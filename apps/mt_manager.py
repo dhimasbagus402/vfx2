@@ -1,4 +1,5 @@
 import re
+import json
 import shutil
 import subprocess
 import threading
@@ -7,7 +8,25 @@ from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk, messagebox
-__version__ = "1.3"
+__version__ = "1.2"
+
+# ── Config file (persist settings antar sesi) ─────────────────────────────────
+CONFIG_PATH = Path.home() / ".config" / "mt_manager" / "settings.json"
+
+def _load_config() -> dict:
+    try:
+        if CONFIG_PATH.exists():
+            return json.loads(CONFIG_PATH.read_text())
+    except Exception:
+        pass
+    return {}
+
+def _save_config(data: dict):
+    try:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(json.dumps(data, indent=2))
+    except Exception:
+        pass
 
 # ── Design Tokens — sesuai HTML metatrader_manager_ui.html ────────────────────
 BG          = "#0d1114"   # --bg
@@ -534,7 +553,7 @@ class ProgressBar(tk.Canvas):
 class MTManager:
     def __init__(self, root):
         self.root = root
-        self.root.title("MetaTrader Manager 3")
+        self.root.title("MetaTrader Manager")
         self.root.geometry("1180x700")
         self.root.configure(bg=BG)
         self.root.resizable(True, True)
@@ -543,9 +562,13 @@ class MTManager:
         self.terminals   = []
         self._font       = resolve_font(FONT)
         self._font_mono  = resolve_font(FONT_MONO)
+        self._cfg        = _load_config()
         self._build_styles()
         self._build_ui()
         self.scan_terminals()
+        # Auto-update: jalankan di background setelah UI siap
+        if self.auto_update_var.get():
+            self.root.after(1500, self._auto_update_check)
 
     # ── Styles ─────────────────────────────────────────────────────────────────
     def _build_styles(self):
@@ -1072,7 +1095,34 @@ class MTManager:
         # Left dots + status items
         self._mk_status_item(sb_inner, "0 terminal",     ACCENT,  dot=True, varname="_term_count_var")
 
-        # Right side — Update button
+        # Right side — Auto-update checkbox + Update button
+        # ── Auto-update checkbox ──
+        self.auto_update_var = tk.BooleanVar(
+            value=self._cfg.get("auto_update", True)
+        )
+
+        def _on_auto_update_toggle():
+            self._cfg["auto_update"] = self.auto_update_var.get()
+            _save_config(self._cfg)
+
+        au_frame = tk.Frame(sb_inner, bg=BG2)
+        au_frame.pack(side="right", padx=(0, 6), fill="y")
+
+        au_cb = tk.Checkbutton(
+            au_frame,
+            text="Auto-update",
+            variable=self.auto_update_var,
+            command=_on_auto_update_toggle,
+            bg=BG2, fg=FG3,
+            selectcolor=BG3,
+            activebackground=BG2, activeforeground=FG,
+            font=(self._font, 8),
+            relief="flat", borderwidth=0,
+            highlightthickness=0, cursor="hand2",
+        )
+        au_cb.pack(side="left", fill="y")
+        Tooltip(au_cb, "Cek update otomatis saat aplikasi dijalankan", position="above")
+
         update_c = tk.Canvas(sb_inner, bg=BG2, highlightthickness=0,
                              height=10, cursor="hand2")
         update_c.pack(side="right", padx=(0, 4))
@@ -1097,7 +1147,7 @@ class MTManager:
         def _update_enter(_): _draw_update_btn(hover=True)
         def _update_leave(_): _draw_update_btn(hover=False)
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 messagebox.showerror("Update Gagal",
                     f"Script tidak ditemukan:\n{update_sh}")
@@ -1268,6 +1318,90 @@ class MTManager:
 
         threading.Thread(target=_run, daemon=True).start()
 
+
+    def _auto_update_check(self):
+        """Cek update secara diam-diam saat startup; tampilkan popup hanya jika ada update baru."""
+        update_sh = Path.home() / "vfx" / "update.sh"
+        if not update_sh.exists():
+            return  # script tidak ada, skip tanpa notifikasi
+
+        self._status("Memeriksa update otomatis…")
+
+        def _run():
+            try:
+                proc = subprocess.run(
+                    ["bash", str(update_sh)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=60,
+                )
+                out = proc.stdout or ""
+                if proc.returncode == 0 and "already up to date" not in out.lower():
+                    # Ada update baru — tampilkan popup
+                    self.root.after(0, lambda: self._show_auto_update_result(True))
+                else:
+                    self.root.after(0, lambda: self._status("Aplikasi sudah up-to-date."))
+            except subprocess.TimeoutExpired:
+                self.root.after(0, lambda: self._status("Auto-update: timeout."))
+            except Exception as e:
+                self.root.after(0, lambda: self._status(f"Auto-update: {e}"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _show_auto_update_result(self, has_update: bool):
+        """Tampilkan notifikasi kecil bila auto-update mendeteksi versi baru."""
+        if not has_update:
+            return
+        f = self._font
+        win = tk.Toplevel(self.root)
+        win.title("Update Tersedia")
+        win.configure(bg=BG)
+        win.geometry("400x160")
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 200
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 80
+        win.geometry(f"400x160+{rx}+{ry}")
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+
+        body = tk.Frame(win, bg=BG, padx=28, pady=20)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(body, text="↺", bg=BG, fg=ACCENT3,
+                 font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
+        tk.Label(body, text="Update berhasil dipasang!",
+                 bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+        tk.Label(body, text="Restart aplikasi untuk menerapkan perubahan.",
+                 bg=BG, fg=FG2, font=(f, 9), anchor="w").grid(row=1, column=1, sticky="w", pady=(4,0))
+
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=44)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        foot_inner = tk.Frame(foot, bg=BG2, padx=12)
+        foot_inner.pack(fill="both", expand=True)
+
+        def _restart():
+            win.destroy()
+            import sys, os
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        r_h, _ = make_pill_btn(foot_inner, "↻  Restart Aplikasi", _restart,
+                               bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
+                               font_size=9, padx=20, pady=6, radius=7)
+        r_h.pack(side="right", pady=8, padx=(0, 6))
+
+        ok_h, _ = make_pill_btn(foot_inner, "Nanti", win.destroy,
+                               bg=BG3, fg=FG, hover_bg=BG4,
+                               font_size=9, padx=20, pady=6, radius=7)
+        ok_h.pack(side="right", pady=8)
+
+        self._status("Update baru tersedia — restart untuk menerapkan.")
 
     def _install_menu(self):
         """Dropdown menu install — popup ditutup SEBELUM yad dibuka."""
