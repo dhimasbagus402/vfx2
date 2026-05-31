@@ -8,7 +8,7 @@ from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk, messagebox
-__version__ = "1.2"
+__version__ = "1.3"
 
 # ── Config file (persist settings antar sesi) ─────────────────────────────────
 CONFIG_PATH = Path.home() / ".config" / "mt_manager" / "settings.json"
@@ -803,7 +803,7 @@ class MTManager:
         tk.Frame(tb, bg=BORDER2, width=1).pack(side="left", fill="y", padx=6, pady=8)
 
         # Uninstall EA (jalankan Uninstall.exe MT)
-        h5, c5 = make_pill_btn(tb, "\u26d4 Uninstall EA", self.uninstall_ea_exe,
+        h5, c5 = make_pill_btn(tb, "\u26d4 Uninstall MT", self.uninstall_ea_exe,
                                bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
                                font_size=10, padx=12, pady=7, radius=10)
         h5.pack(side="left", pady=8, padx=2)
