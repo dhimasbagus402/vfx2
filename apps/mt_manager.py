@@ -1147,7 +1147,7 @@ class MTManager:
         def _update_enter(_): _draw_update_btn(hover=True)
         def _update_leave(_): _draw_update_btn(hover=False)
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx" / "update.sh"
+            update_sh = Path.home() / "vfx2" / "update.sh"
             if not update_sh.exists():
                 messagebox.showerror("Update Gagal",
                     f"Script tidak ditemukan:\n{update_sh}")
@@ -1321,7 +1321,7 @@ class MTManager:
 
     def _auto_update_check(self):
         """Cek update secara diam-diam saat startup; tampilkan popup hanya jika ada update baru."""
-        update_sh = Path.home() / "vfx" / "update.sh"
+        update_sh = Path.home() / "vfx2" / "update.sh"
         if not update_sh.exists():
             return  # script tidak ada, skip tanpa notifikasi
 
