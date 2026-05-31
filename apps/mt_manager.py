@@ -8,7 +8,7 @@ from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk, messagebox
-__version__ = "1.3"
+__version__ = "1.2"
 
 # ── Config file (persist settings antar sesi) ─────────────────────────────────
 CONFIG_PATH = Path.home() / ".config" / "mt_manager" / "settings.json"
@@ -792,7 +792,7 @@ class MTManager:
         h3.pack(side="left", pady=8, padx=2)
         Tooltip(c3, "Hapus semua Logs pada MT")
 
-        # Uninstall
+        # Delete
         h4, c4 = make_pill_btn(tb, "\u232b Delete", self.uninstall_file,
                                bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
                                font_size=10, padx=12, pady=7, radius=10)
@@ -802,8 +802,8 @@ class MTManager:
         # Separator
         tk.Frame(tb, bg=BORDER2, width=1).pack(side="left", fill="y", padx=6, pady=8)
 
-        # Uninstall EA (jalankan Uninstall.exe MT)
-        h5, c5 = make_pill_btn(tb, "\u26d4 Uninstall MT", self.uninstall_ea_exe,
+        # Uninstall MT (jalankan Uninstall.exe MT)
+        h5, c5 = make_pill_btn(tb, "\u26d4 Uninstall EA", self.uninstall_ea_exe,
                                bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
                                font_size=10, padx=12, pady=7, radius=10)
         h5.pack(side="left", pady=8, padx=2)
@@ -818,6 +818,13 @@ class MTManager:
                                font_size=10, padx=12, pady=7, radius=10)
         h6.pack(side="left", pady=8, padx=2)
         Tooltip(c6, "Jalankan terminal MT yang dipilih")
+
+        # Open MetaEditor
+        h7, c7 = make_pill_btn(tb, "\u270e MetaEditor", self.open_metaeditor,
+                               bg="#001a2a", fg="#3ab8e0", hover_bg="#002a3d",
+                               font_size=10, padx=12, pady=7, radius=10)
+        h7.pack(side="left", pady=8, padx=2)
+        Tooltip(c7, "Buka MetaEditor untuk MT yang dipilih")
 
 
         # ── CONTENT AREA (no scroll canvas — table fills remaining space) ──
@@ -1422,7 +1429,7 @@ class MTManager:
 
         self._status("Update baru tersedia — restart untuk menerapkan.")
 
-    # ── Uninstall EA (jalankan Uninstall.exe) ─────────────────────────────────
+    # ── Uninstall MT (jalankan Uninstall.exe) ─────────────────────────────────
     def uninstall_ea_exe(self):
         t = self._terminal()
         if not t:
@@ -1472,7 +1479,7 @@ class MTManager:
         # ── Konfirmasi popup custom ──────────────────────────────────────────
         f = self._font
         win = tk.Toplevel(self.root)
-        win.title("Konfirmasi Uninstall EA")
+        win.title("Konfirmasi Uninstall MT")
         win.configure(bg=BG)
         win.resizable(False, False)
         win.attributes("-topmost", True)
@@ -1488,7 +1495,7 @@ class MTManager:
                  font=(f, 22)).pack(side="left", padx=(0, 14))
         title_col = tk.Frame(hdr, bg=BG)
         title_col.pack(side="left", fill="x", expand=True)
-        tk.Label(title_col, text="Uninstall EA",
+        tk.Label(title_col, text="Uninstall MT",
                  bg=BG, fg=FG, font=(f, 12, "bold"), anchor="w").pack(anchor="w")
         tk.Label(title_col, text=f"{t['name']}  ·  {t['type']}",
                  bg=BG, fg=FG3, font=(f, 9), anchor="w").pack(anchor="w")
@@ -1620,6 +1627,67 @@ class MTManager:
             except Exception as e:
                 self.root.after(0, lambda: messagebox.showerror(
                     "Gagal", f"Tidak dapat membuka terminal:\n{e}"))
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    # ── Open MetaEditor ────────────────────────────────────────────────────────
+    def open_metaeditor(self):
+        t = self._terminal()
+        if not t:
+            return
+
+        terminal_path = Path(t["path"])
+        exe_path = None
+
+        if t["type"] == "MT5":
+            # MT5: MetaEditor64.exe ada langsung di folder MT
+            candidate = terminal_path / "MetaEditor64.exe"
+            if candidate.exists():
+                exe_path = candidate
+
+        else:
+            # MT4: gunakan install_path yang sudah diparse saat scan
+            install_path = t.get("install_path")
+            if install_path:
+                candidate = Path(install_path) / "metaeditor.exe"
+                if candidate.exists():
+                    exe_path = candidate
+            if exe_path is None:
+                # Fallback: coba di folder AppData terminal
+                candidate = terminal_path / "metaeditor.exe"
+                if candidate.exists():
+                    exe_path = candidate
+
+        if exe_path is None:
+            exe_name = "MetaEditor64.exe" if t["type"] == "MT5" else "metaeditor.exe"
+            messagebox.showerror(
+                f"{exe_name} tidak ditemukan",
+                f"File {exe_name} tidak dapat ditemukan untuk terminal:\n"
+                f"{t['name']} ({t['type']})\n\n"
+                f"Folder yang diperiksa:\n{terminal_path}"
+            )
+            return
+
+        self._status(f"Membuka MetaEditor {t['name']} ({t['type']})…")
+
+        def _do():
+            try:
+                subprocess.Popen(
+                    ["wine", str(exe_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self.root.after(0, lambda: self._status(
+                    f"MetaEditor {t['name']} ({t['type']}) sedang dibuka."))
+            except FileNotFoundError:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Wine tidak ditemukan",
+                    "Perintah 'wine' tidak tersedia.\n"
+                    "Install wine terlebih dahulu:\n  sudo apt install wine"
+                ))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Gagal", f"Tidak dapat membuka MetaEditor:\n{e}"))
 
         threading.Thread(target=_do, daemon=True).start()
 
