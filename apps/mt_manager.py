@@ -568,7 +568,7 @@ class MTManager:
         self.scan_terminals()
         # Auto-update: jalankan di background setelah UI siap
         if self.auto_update_var.get():
-            self.root.after(1500, self._auto_update_check)
+            self.root.after(5500, self._auto_update_check)
 
     # ── Styles ─────────────────────────────────────────────────────────────────
     def _build_styles(self):
