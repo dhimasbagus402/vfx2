@@ -1432,47 +1432,31 @@ class MTManager:
         uninstall_exe = None
 
         if t["type"] == "MT4":
-            # MT4: baca origin.txt untuk dapat path instalasi asli
-            origin_file = terminal_path / "origin.txt"
-            if not origin_file.exists():
+            # Gunakan install_path yang sudah diparse saat scan
+            install_path = t.get("install_path")
+            if install_path:
+                candidate = Path(install_path) / "Uninstall.exe"
+                if candidate.exists():
+                    uninstall_exe = candidate
+            if uninstall_exe is None:
+                # Fallback: coba di folder AppData terminal
+                candidate = terminal_path / "Uninstall.exe"
+                if candidate.exists():
+                    uninstall_exe = candidate
+            if uninstall_exe is None:
+                ip_str = str(install_path) if install_path else "(gagal parse origin.txt)"
                 messagebox.showerror(
-                    "origin.txt tidak ditemukan",
-                    f"File origin.txt tidak ada di:\n{terminal_path}\n\n"
-                    "Tidak dapat menentukan lokasi Uninstall.exe."
+                    "Uninstall.exe tidak ditemukan",
+                    f"File Uninstall.exe tidak dapat ditemukan untuk terminal:\n"
+                    f"{t['name']} (MT4)\n\n"
+                    f"Path instalasi dari origin.txt:\n{ip_str}\n\n"
+                    f"Folder AppData:\n{terminal_path}"
                 )
-                return
-            try:
-                raw = origin_file.read_bytes().decode("utf-16", errors="ignore").strip()
-                # origin.txt berisi path Windows, contoh:
-                # C:\Program Files (x86)\BrokerName MT4\
-                # Konversi ke path wine: drive_c/Program Files (x86)/...
-                win_path = raw.replace("\\", "/").strip("/")
-                # Hapus drive letter (misal "C:/")
-                if len(win_path) >= 2 and win_path[1] == ":":
-                    win_path = win_path[3:]  # buang "C:/"
-                # Cari base wine prefix
-                home = Path.home()
-                wine_roots = [
-                    home / ".wine" / "drive_c",
-                    home / "Games" / "drive_c",
-                ]
-                for wine_c in wine_roots:
-                    candidate = wine_c / win_path / "Uninstall.exe"
-                    if candidate.exists():
-                        uninstall_exe = candidate
-                        break
-                if uninstall_exe is None:
-                    # Fallback: coba langsung di folder terminal
-                    candidate = terminal_path / "uinstall.exe"
-                    if candidate.exists():
-                        uninstall_exe = candidate
-            except Exception as e:
-                messagebox.showerror("Gagal membaca origin.txt", str(e))
                 return
 
         else:
             # MT5: Uninstall.exe ada langsung di folder MT
-            candidate = terminal_path / "uninstall.exe"
+            candidate = terminal_path / "Uninstall.exe"
             if candidate.exists():
                 uninstall_exe = candidate
 
@@ -1594,27 +1578,14 @@ class MTManager:
                 exe_path = candidate
 
         else:
-            # MT4: folder di AppData, baca origin.txt untuk path instalasi asli
-            origin_file = terminal_path / "origin.txt"
-            if origin_file.exists():
-                try:
-                    raw = origin_file.read_bytes().decode("utf-16", errors="ignore").strip()
-                    win_path = raw.replace("\\", "/").strip("/")
-                    if len(win_path) >= 2 and win_path[1] == ":":
-                        win_path = win_path[3:]  # buang "C:/"
-                    home = Path.home()
-                    for wine_c in [home / ".wine" / "drive_c",
-                                   home / "Games" / "drive_c"]:
-                        candidate = wine_c / win_path / "terminal.exe"
-                        if candidate.exists():
-                            exe_path = candidate
-                            break
-                except Exception as e:
-                    messagebox.showerror("Gagal membaca origin.txt", str(e))
-                    return
-
+            # MT4: gunakan install_path yang sudah diparse saat scan
+            install_path = t.get("install_path")
+            if install_path:
+                candidate = Path(install_path) / "terminal.exe"
+                if candidate.exists():
+                    exe_path = candidate
             if exe_path is None:
-                # Fallback: coba langsung di folder terminal
+                # Fallback: coba langsung di folder AppData terminal
                 candidate = terminal_path / "terminal.exe"
                 if candidate.exists():
                     exe_path = candidate
@@ -2192,6 +2163,49 @@ class MTManager:
                     pass
             return folder.name[:22]
 
+        def _mt4_install_path(folder):
+            """Baca origin.txt → konversi path Windows ke path Linux/Wine."""
+            origin = folder / "origin.txt"
+            if not origin.exists():
+                return None
+            raw_bytes = origin.read_bytes()
+            raw = None
+            # Coba berbagai encoding: UTF-16 LE (BOM), UTF-16 BE, UTF-8, latin-1
+            for enc in ("utf-16", "utf-16-le", "utf-16-be", "utf-8", "latin-1"):
+                try:
+                    decoded = raw_bytes.decode(enc, errors="strict")
+                    # Buang null bytes sisa UTF-16 yang di-decode salah
+                    decoded = decoded.replace("\x00", "").strip()
+                    if decoded and ("\\" in decoded or ":" in decoded):
+                        raw = decoded
+                        break
+                except (UnicodeDecodeError, ValueError):
+                    continue
+            if not raw:
+                # Last resort: decode dengan ignore
+                raw = raw_bytes.decode("utf-16", errors="ignore").replace("\x00", "").strip()
+            if not raw:
+                return None
+            try:
+                # Ambil baris pertama saja (kadang ada newline di akhir)
+                raw = raw.splitlines()[0].strip()
+                # Konversi backslash Windows ke forward slash
+                win_path = raw.replace("\\", "/").strip().rstrip("/")
+                # Buang drive letter "C:/" di awal
+                if len(win_path) >= 3 and win_path[1] == ":":
+                    win_path = win_path[3:]   # "Program Files (x86)/FBS Trader 4 (MT4)"
+                if not win_path:
+                    return None
+                home = Path.home()
+                for wine_c in [home / ".wine" / "drive_c",
+                               home / "Games"  / "drive_c"]:
+                    candidate = wine_c / win_path
+                    if candidate.exists():
+                        return candidate
+            except Exception:
+                pass
+            return None
+
         users_dir = home / ".wine/drive_c/users"
         if users_dir.exists():
             for userdir in users_dir.iterdir():
@@ -2203,6 +2217,7 @@ class MTManager:
                     if mql4.exists():
                         self.terminals.append({
                             "type": "MT4", "name": _mt4_name(folder), "path": str(folder),
+                            "install_path": _mt4_install_path(folder),  # path instalasi asli
                             "experts": mql4 / "Experts", "indicators": mql4 / "Indicators",
                             "scripts": mql4 / "Scripts",  "logs": folder / "logs",
                         })
