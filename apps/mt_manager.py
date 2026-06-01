@@ -883,6 +883,16 @@ class MTManager:
         h7.pack(side="left", pady=8, padx=2)
         Tooltip(c7, "Buka MetaEditor untuk MT yang dipilih")
 
+        # Separator
+        tk.Frame(tb, bg=BORDER2, width=1).pack(side="left", fill="y", padx=6, pady=8)
+
+        # Install MT
+        h8, c8 = make_pill_btn(tb, "\u2b07 Install MT", self.install_mt,
+                               bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
+                               font_size=10, padx=12, pady=7, radius=10)
+        h8.pack(side="left", pady=8, padx=2)
+        Tooltip(c8, "Install MT4/MT5 baru dari file installer (.exe)")
+
 
         # ── CONTENT AREA (no scroll canvas — table fills remaining space) ──
         content_main = tk.Frame(main, bg=BG)
@@ -1662,6 +1672,255 @@ class MTManager:
                 f"Folder: {t['path']}")
             return
         self._wine_launch(exe, f"MetaEditor {t['name']} ({t['type']})")
+
+    # ── Install MT (dari file .exe installer) ─────────────────────────────────
+    def install_mt(self):
+        """Pilih file installer MT (.exe), tentukan jumlah instance, lalu jalankan."""
+        f  = self._font
+        fm = self._font_mono
+
+        win = tk.Toplevel(self.root)
+        win.title("Install MetaTrader")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 270
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 160
+        win.geometry(f"540x320+{rx}+{ry}")
+        win.deiconify()
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+
+        # Header
+        hdr = tk.Frame(win, bg=BG2, height=48)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
+        hdr_inner.pack(fill="both", expand=True)
+        tk.Label(hdr_inner, text="\u2b07  Install MetaTrader",
+                 bg=BG2, fg=FG, font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+
+        # Body
+        body = tk.Frame(win, bg=BG, padx=24, pady=20)
+        body.pack(fill="both", expand=True)
+
+        # Baris 1: Pilih file installer
+        tk.Label(body, text="FILE INSTALLER (.EXE)",
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
+
+        file_row = tk.Frame(body, bg=BG)
+        file_row.pack(fill="x", pady=(4, 14))
+
+        installer_var = tk.StringVar(value="")
+
+        entry_border = tk.Frame(file_row, bg=BORDER2, padx=1, pady=1)
+        entry_border.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        installer_entry = tk.Entry(
+            entry_border, textvariable=installer_var,
+            bg=BG3, fg=FG2, insertbackground=ACCENT,
+            relief="flat", font=(fm, 9), highlightthickness=0,
+            state="readonly",
+        )
+        installer_entry.pack(fill="x", ipady=7, padx=1)
+
+        def _pick_file():
+            result = yad_pick_file(
+                title="Pilih File Installer MT",
+                filetypes=["*.exe"],
+                start_dir=DOCS_DIR,
+            )
+            if result:
+                installer_var.set(result)
+                entry_border.config(bg=ACCENT)
+                win.after(200, lambda: entry_border.config(bg=BORDER2))
+
+        bh, _ = make_pill_btn(file_row, "\u25a6 Browse",
+                              _pick_file,
+                              bg=BG3, fg=FG, hover_bg=BG4,
+                              font_size=10, padx=12, pady=7, radius=7)
+        bh.pack(side="left")
+
+        # Baris 2: Jumlah instance
+        tk.Label(body, text="JUMLAH INSTALASI",
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
+
+        qty_row = tk.Frame(body, bg=BG)
+        qty_row.pack(fill="x", pady=(4, 0))
+
+        qty_var = tk.IntVar(value=1)
+
+        def _set_qty(v):
+            try:
+                qty_var.set(max(1, min(20, int(v))))
+            except (ValueError, tk.TclError):
+                pass
+
+        def _dec():
+            _set_qty(qty_var.get() - 1)
+
+        def _inc():
+            _set_qty(qty_var.get() + 1)
+
+        dec_h, _ = make_pill_btn(qty_row, "\u2212", _dec,
+                                 bg=BG3, fg=FG, hover_bg=BG4,
+                                 font_size=12, padx=10, pady=6, radius=7)
+        dec_h.pack(side="left", padx=(0, 6))
+
+        qty_border = tk.Frame(qty_row, bg=BORDER2, padx=1, pady=1)
+        qty_border.pack(side="left", padx=(0, 6))
+        qty_entry = tk.Entry(
+            qty_border, textvariable=qty_var,
+            bg=BG3, fg=FG, insertbackground=ACCENT,
+            relief="flat", font=(f, 11, "bold"),
+            width=4, justify="center",
+            highlightthickness=0,
+        )
+        qty_entry.pack(ipady=6, padx=1)
+        qty_entry.bind("<FocusOut>", lambda _: _set_qty(qty_var.get()))
+
+        inc_h, _ = make_pill_btn(qty_row, "+", _inc,
+                                 bg=BG3, fg=FG, hover_bg=BG4,
+                                 font_size=12, padx=10, pady=6, radius=7)
+        inc_h.pack(side="left")
+
+        tk.Label(qty_row, text="instance  (maks. 20)",
+                 bg=BG, fg=FG3, font=(f, 9)).pack(side="left", padx=(10, 0))
+
+        # Status mini
+        status_var = tk.StringVar(value="")
+        status_lbl = tk.Label(body, textvariable=status_var,
+                              bg=BG, fg=FG3, font=(f, 9), anchor="w")
+        status_lbl.pack(fill="x", pady=(12, 0))
+
+        # Footer
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=50)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=14)
+        fi.pack(fill="both", expand=True)
+
+        def _run_install():
+            path = installer_var.get().strip()
+            if not path:
+                status_var.set("\u26a0  Pilih file installer terlebih dahulu.")
+                status_lbl.config(fg=WARN)
+                return
+            if not Path(path).exists():
+                status_var.set("\u26a0  File tidak ditemukan.")
+                status_lbl.config(fg=DANGER)
+                return
+            qty = qty_var.get()
+            win.destroy()
+            self._run_mt_installer(Path(path), qty)
+
+        run_h, _ = make_pill_btn(fi, "\u2b07  Mulai Install", _run_install,
+                                 bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
+                                 font_size=10, padx=20, pady=7, radius=7)
+        run_h.pack(side="right", pady=8, padx=(0, 6))
+
+        cancel_h, _ = make_pill_btn(fi, "Batal", win.destroy,
+                                    bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+
+    def _run_mt_installer(self, installer_path: Path, qty: int):
+        """Jalankan installer sebanyak qty kali via Wine, satu per satu."""
+        f = self._font
+
+        win = tk.Toplevel(self.root)
+        win.title("Menjalankan Installer")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 220
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 110
+        win.geometry(f"440x220+{rx}+{ry}")
+        win.deiconify()
+
+        body = tk.Frame(win, bg=BG, padx=28, pady=24)
+        body.pack(fill="both", expand=True)
+
+        icon_lbl = tk.Label(body, text="\u2b07", bg=BG, fg="#5ecf3e",
+                            font=(f, 22))
+        icon_lbl.grid(row=0, column=0, rowspan=3, padx=(0, 16), sticky="n")
+
+        title_lbl = tk.Label(body, text="Memulai installer\u2026",
+                             bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w")
+        title_lbl.grid(row=0, column=1, sticky="w")
+
+        sub_lbl = tk.Label(body, text=installer_path.name,
+                           bg=BG, fg=FG2, font=(f, 9), anchor="w")
+        sub_lbl.grid(row=1, column=1, sticky="w", pady=(2, 8))
+
+        prog_frame = tk.Frame(body, bg=BG)
+        prog_frame.grid(row=2, column=1, sticky="ew")
+        body.columnconfigure(1, weight=1)
+
+        progress = ProgressBar(prog_frame, height=3, bg=BG4, fill="#5ecf3e")
+        progress.pack(fill="x")
+
+        count_var = tk.StringVar(value=f"0 / {qty}")
+        tk.Label(prog_frame, textvariable=count_var,
+                 bg=BG, fg=FG3, font=(f, 8)).pack(anchor="e", pady=(3, 0))
+
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=44)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12)
+        fi.pack(fill="both", expand=True)
+
+        close_h, _ = make_pill_btn(fi, "Tutup", win.destroy,
+                                   bg=BG3, fg=FG, hover_bg=BG4,
+                                   font_size=9, padx=20, pady=6, radius=7)
+        # tombol tutup muncul setelah selesai / error
+
+        def _do():
+            errors = []
+            for i in range(qty):
+                def _upd(idx=i):
+                    title_lbl.config(text=f"Menjalankan installer {idx + 1} dari {qty}\u2026")
+                    count_var.set(f"{idx} / {qty}")
+                    progress.set(idx / qty if qty > 1 else 0)
+                win.after(0, _upd)
+
+                try:
+                    subprocess.run(
+                        ["wine", str(installer_path)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except FileNotFoundError:
+                    errors.append(f"[{i+1}] wine tidak ditemukan")
+                    break
+                except Exception as e:
+                    errors.append(f"[{i+1}] {e}")
+
+            def _done():
+                progress.set(1.0)
+                count_var.set(f"{qty} / {qty}")
+                if errors:
+                    icon_lbl.config(text="\u26a0", fg=WARN)
+                    title_lbl.config(text=f"Selesai dengan {len(errors)} error.", fg=WARN)
+                    sub_lbl.config(text="\n".join(errors[:3]), fg=DANGER)
+                else:
+                    icon_lbl.config(text="\u2713", fg="#5ecf3e")
+                    title_lbl.config(text=f"{qty} installer selesai dijalankan.", fg=FG)
+                    sub_lbl.config(
+                        text="Tekan Scan untuk melihat terminal baru.", fg=FG2)
+                close_h.pack(side="right", pady=8)
+                self._status(
+                    f"Install MT selesai: {qty} instance dari {installer_path.name}")
+
+            win.after(0, _done)
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _install_menu(self):
         """Dropdown menu install — popup ditutup SEBELUM yad dibuka."""
@@ -2495,14 +2754,5 @@ class MTManager:
 
 if __name__ == "__main__":
     root = tk.Tk()
-
-    # ── App Icon — ambil dari folder yang sama dengan script ──────────────
-    try:
-        _icon_path = Path(__file__).parent / "mt_manager.png"
-        _icon = tk.PhotoImage(file=str(_icon_path))
-        root.iconphoto(True, _icon)
-    except Exception:
-        pass  # icon tidak ditemukan, lanjut tanpa error
-
     app = MTManager(root)
     root.mainloop()
