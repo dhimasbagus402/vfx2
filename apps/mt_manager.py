@@ -105,7 +105,7 @@ EXTRACT_EXTS = {".zip", ".rar", ".tar", ".gz", ".bz2", ".xz", ".7z",
 # Font: JetBrains Mono dengan fallback DejaVu Sans Mono
 FONT        = "San Francisco"
 FONT_MONO   = "San Francisco"
-SIDEBAR_W   = 230
+SIDEBAR_W   = 250
 
 
 # ── Font resolver ──────────────────────────────────────────────────────────────
