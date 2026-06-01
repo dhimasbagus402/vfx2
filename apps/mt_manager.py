@@ -1689,10 +1689,6 @@ class MTManager:
         ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 160
         win.geometry(f"540x320+{rx}+{ry}")
         win.deiconify()
-        try:
-            win.grab_set()
-        except Exception:
-            pass
 
         # Header
         hdr = tk.Frame(win, bg=BG2, height=48)
@@ -1728,15 +1724,30 @@ class MTManager:
         installer_entry.pack(fill="x", ipady=7, padx=1)
 
         def _pick_file():
-            result = yad_pick_file(
-                title="Pilih File Installer MT",
-                filetypes=["*.exe"],
-                start_dir=DOCS_DIR,
-            )
-            if result:
-                installer_var.set(result)
-                entry_border.config(bg=ACCENT)
-                win.after(200, lambda: entry_border.config(bg=BORDER2))
+            # Lepas grab dulu agar yad (window eksternal) bisa menerima input
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+
+            def _do_yad():
+                result = yad_pick_file(
+                    title="Pilih File Installer MT",
+                    filetypes=["*.exe"],
+                    start_dir=DOCS_DIR,
+                )
+                def _back():
+                    if result:
+                        installer_var.set(result)
+                        entry_border.config(bg=ACCENT)
+                        win.after(200, lambda: entry_border.config(bg=BORDER2))
+                    try:
+                        win.grab_set()
+                    except Exception:
+                        pass
+                win.after(0, _back)
+
+            threading.Thread(target=_do_yad, daemon=True).start()
 
         bh, _ = make_pill_btn(file_row, "\u25a6 Browse",
                               _pick_file,
