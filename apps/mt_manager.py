@@ -2495,5 +2495,14 @@ class MTManager:
 
 if __name__ == "__main__":
     root = tk.Tk()
+
+    # ── App Icon — ambil dari folder yang sama dengan script ──────────────
+    try:
+        _icon_path = Path(__file__).parent / "mt_manager.png"
+        _icon = tk.PhotoImage(file=str(_icon_path))
+        root.iconphoto(True, _icon)
+    except Exception:
+        pass  # icon tidak ditemukan, lanjut tanpa error
+
     app = MTManager(root)
     root.mainloop()
