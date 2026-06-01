@@ -883,6 +883,16 @@ class MTManager:
         h7.pack(side="left", pady=8, padx=2)
         Tooltip(c7, "Buka MetaEditor untuk MT yang dipilih")
 
+        # Separator
+        tk.Frame(tb, bg=BORDER2, width=1).pack(side="left", fill="y", padx=6, pady=8)
+
+        # Install MT
+        h8, c8 = make_pill_btn(tb, "\u2b07 Install MT", self.install_mt,
+                               bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
+                               font_size=10, padx=12, pady=7, radius=10)
+        h8.pack(side="left", pady=8, padx=2)
+        Tooltip(c8, "Install MT4/MT5 baru dari file installer (.exe)")
+
 
         # ── CONTENT AREA (no scroll canvas — table fills remaining space) ──
         content_main = tk.Frame(main, bg=BG)
@@ -1662,6 +1672,709 @@ class MTManager:
                 f"Folder: {t['path']}")
             return
         self._wine_launch(exe, f"MetaEditor {t['name']} ({t['type']})")
+
+    # ── Install MT (dari file .exe installer) ─────────────────────────────────
+    def install_mt(self):
+        """Pilih file installer MT (.exe), tentukan jumlah instance, lalu jalankan."""
+        f  = self._font
+        fm = self._font_mono
+
+        win = tk.Toplevel(self.root)
+        win.title("Install MetaTrader")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 270
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 200
+        win.geometry(f"540x400+{rx}+{ry}")
+        win.deiconify()
+
+        # Header
+        hdr = tk.Frame(win, bg=BG2, height=48)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
+        hdr_inner.pack(fill="both", expand=True)
+        tk.Label(hdr_inner, text="\u2b07  Install MetaTrader",
+                 bg=BG2, fg=FG, font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+
+        # Body
+        body = tk.Frame(win, bg=BG, padx=24, pady=20)
+        body.pack(fill="both", expand=True)
+
+        # Baris 1: Pilih file installer
+        tk.Label(body, text="FILE INSTALLER (.EXE)",
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
+
+        file_row = tk.Frame(body, bg=BG)
+        file_row.pack(fill="x", pady=(4, 14))
+
+        installer_var = tk.StringVar(value="")
+
+        entry_border = tk.Frame(file_row, bg=BORDER2, padx=1, pady=1)
+        entry_border.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        installer_entry = tk.Entry(
+            entry_border, textvariable=installer_var,
+            bg=BG3, fg=FG2, insertbackground=ACCENT,
+            relief="flat", font=(fm, 9), highlightthickness=0,
+            state="readonly",
+        )
+        installer_entry.pack(fill="x", ipady=7, padx=1)
+
+        def _pick_file():
+            # Lepas grab dulu agar yad (window eksternal) bisa menerima input
+            try:
+                win.grab_release()
+            except Exception:
+                pass
+
+            def _do_yad():
+                result = yad_pick_file(
+                    title="Pilih File Installer MT",
+                    filetypes=["*.exe"],
+                    start_dir=DOCS_DIR,
+                )
+                def _back():
+                    if result:
+                        installer_var.set(result)
+                        entry_border.config(bg=ACCENT)
+                        win.after(200, lambda: entry_border.config(bg=BORDER2))
+                    try:
+                        win.grab_set()
+                    except Exception:
+                        pass
+                win.after(0, _back)
+
+            threading.Thread(target=_do_yad, daemon=True).start()
+
+        bh, _ = make_pill_btn(file_row, "\u25a6 Browse",
+                              _pick_file,
+                              bg=BG3, fg=FG, hover_bg=BG4,
+                              font_size=10, padx=12, pady=7, radius=7)
+        bh.pack(side="left")
+
+        # Baris 2: Base name folder & group
+        tk.Label(body, text="NAMA FOLDER & PROGRAM GROUP",
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x", pady=(0, 0))
+
+        name_border = tk.Frame(body, bg=BORDER2, padx=1, pady=1)
+        name_border.pack(fill="x", pady=(4, 4))
+        basename_var = tk.StringVar(value="")
+        basename_entry = tk.Entry(
+            name_border, textvariable=basename_var,
+            bg=BG3, fg=FG, insertbackground=ACCENT,
+            relief="flat", font=(fm, 9), highlightthickness=0,
+        )
+        basename_entry.pack(fill="x", ipady=7, padx=1)
+
+        # hint label — update dinamis berdasarkan qty
+        hint_var = tk.StringVar(value="")
+        hint_lbl = tk.Label(body, textvariable=hint_var,
+                            bg=BG, fg=FG3, font=(f, 8), anchor="w")
+        hint_lbl.pack(fill="x", pady=(0, 10))
+
+        def _update_hint(*_):
+            name = basename_var.get().strip()
+            q    = qty_var.get() if hasattr(qty_var, "get") else 1
+            if not name:
+                hint_var.set("")
+                return
+            if q == 1:
+                hint_var.set(f"\u2192  C:\\Program Files (x86)\\{name}")
+            else:
+                examples = ", ".join(f"{name} {n}" for n in range(1, min(q, 3) + 1))
+                if q > 3:
+                    examples += ", \u2026"
+                hint_var.set(f"\u2192  {examples}")
+
+        basename_var.trace_add("write", _update_hint)
+
+        # Baris 3: Jumlah instance
+        tk.Label(body, text="JUMLAH INSTALASI",
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
+
+        qty_row = tk.Frame(body, bg=BG)
+        qty_row.pack(fill="x", pady=(4, 0))
+
+        qty_var = tk.IntVar(value=1)
+        qty_var.trace_add("write", _update_hint)
+
+        def _set_qty(v):
+            try:
+                qty_var.set(max(1, min(20, int(v))))
+            except (ValueError, tk.TclError):
+                pass
+
+        def _dec():
+            _set_qty(qty_var.get() - 1)
+
+        def _inc():
+            _set_qty(qty_var.get() + 1)
+
+        dec_h, _ = make_pill_btn(qty_row, "\u2212", _dec,
+                                 bg=BG3, fg=FG, hover_bg=BG4,
+                                 font_size=12, padx=10, pady=6, radius=7)
+        dec_h.pack(side="left", padx=(0, 6))
+
+        qty_border = tk.Frame(qty_row, bg=BORDER2, padx=1, pady=1)
+        qty_border.pack(side="left", padx=(0, 6))
+        qty_entry = tk.Entry(
+            qty_border, textvariable=qty_var,
+            bg=BG3, fg=FG, insertbackground=ACCENT,
+            relief="flat", font=(f, 11, "bold"),
+            width=4, justify="center",
+            highlightthickness=0,
+        )
+        qty_entry.pack(ipady=6, padx=1)
+        qty_entry.bind("<FocusOut>", lambda _: _set_qty(qty_var.get()))
+
+        inc_h, _ = make_pill_btn(qty_row, "+", _inc,
+                                 bg=BG3, fg=FG, hover_bg=BG4,
+                                 font_size=12, padx=10, pady=6, radius=7)
+        inc_h.pack(side="left")
+
+        tk.Label(qty_row, text="instance  (maks. 20)",
+                 bg=BG, fg=FG3, font=(f, 9)).pack(side="left", padx=(10, 0))
+
+        # Status mini
+        status_var = tk.StringVar(value="")
+        status_lbl = tk.Label(body, textvariable=status_var,
+                              bg=BG, fg=FG3, font=(f, 9), anchor="w")
+        status_lbl.pack(fill="x", pady=(10, 0))
+
+        # Footer
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=50)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=14)
+        fi.pack(fill="both", expand=True)
+
+        def _run_install():
+            path = installer_var.get().strip()
+            if not path:
+                status_var.set("\u26a0  Pilih file installer terlebih dahulu.")
+                status_lbl.config(fg=WARN)
+                return
+            if not Path(path).exists():
+                status_var.set("\u26a0  File tidak ditemukan.")
+                status_lbl.config(fg=DANGER)
+                return
+            base = basename_var.get().strip()
+            if not base:
+                status_var.set("\u26a0  Isi nama folder & program group.")
+                status_lbl.config(fg=WARN)
+                return
+            qty = qty_var.get()
+            win.destroy()
+            self._run_mt_installer(Path(path), qty, base_name=base)
+
+        run_h, _ = make_pill_btn(fi, "\u2b07  Mulai Install", _run_install,
+                                 bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
+                                 font_size=10, padx=20, pady=7, radius=7)
+        run_h.pack(side="right", pady=8, padx=(0, 6))
+
+        cancel_h, _ = make_pill_btn(fi, "Batal", win.destroy,
+                                    bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+
+    # ── helpers: deteksi tipe installer & silent install ────────────────────
+    @staticmethod
+    def _detect_installer_type(exe_path: Path) -> str:
+        """Baca byte header .exe untuk deteksi Inno Setup vs NSIS vs unknown."""
+        try:
+            data = exe_path.read_bytes()
+            if b"Inno Setup" in data[:65536]:
+                return "inno"
+            if b"Nullsoft" in data[:65536] or b"NSIS" in data[:65536]:
+                return "nsis"
+        except Exception:
+            pass
+        return "unknown"
+
+    @staticmethod
+    def _try_silent_install(installer_path: Path, inst_type: str,
+                            win_path: str, group_value: str,
+                            log_fn=None) -> "subprocess.Popen | None":
+        """
+        Coba jalankan installer dalam mode silent.
+        Return Popen object jika berhasil diluncurkan, None jika tidak support.
+
+        Inno Setup : /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+                     /DIR="C:\\path" /GROUP="nama group"
+        NSIS        : /S /D=C:\\path  /GROUP=nama group
+
+        Catatan: /VERYSILENT lebih kuat dari /SILENT —
+          /SILENT    masih tampilkan progress window
+          /VERYSILENT benar-benar tanpa UI sama sekali
+        """
+        try:
+            if inst_type == "inno":
+                cmd = [
+                    "wine", str(installer_path),
+                    "/VERYSILENT",
+                    "/SUPPRESSMSGBOXES",
+                    "/NORESTART",
+                    f"/DIR={win_path}",
+                    f"/GROUP={group_value}",
+                ]
+            elif inst_type == "nsis":
+                cmd = [
+                    "wine", str(installer_path),
+                    "/S",
+                    f"/D={win_path}",
+                    f"/GROUP={group_value}",
+                ]
+            else:
+                return None   # unknown → tidak coba silent
+
+            if log_fn:
+                log_fn(f"Silent cmd: {' '.join(cmd)}")
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            return proc
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            if log_fn:
+                log_fn(f"Silent launch error: {e}")
+            return None
+
+    @staticmethod
+    def _silent_succeeded(proc: "subprocess.Popen", install_dir_win: str,
+                          timeout: int = 120) -> bool:
+        """
+        Tunggu proc selesai (maks timeout detik) lalu verifikasi
+        apakah folder tujuan benar-benar terbuat di Wine filesystem.
+
+        Return True  → silent install sukses
+        Return False → gagal / folder tidak ditemukan
+        """
+        import time
+        deadline = time.time() + timeout
+        while proc.poll() is None:
+            if time.time() > deadline:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return False
+            time.sleep(0.5)
+
+        # Konversi Windows path → Linux path
+        # "C:\Program Files (x86)\MT4 Broker 1"
+        #   → ~/.wine/drive_c/Program Files (x86)/MT4 Broker 1
+        try:
+            wp = install_dir_win.replace("\\", "/").strip()
+            if len(wp) >= 3 and wp[1] == ":":
+                wp = wp[3:]
+            linux_path = Path.home() / ".wine/drive_c" / wp.lstrip("/")
+            return linux_path.exists()
+        except Exception:
+            return proc.returncode == 0
+
+    @staticmethod
+    def _xdotool_fill_installer(win_id: str, dir_val: str, group_val: str,
+                                 log_fn=None) -> bool:
+        """
+        Isi field "Installation folder" dan "Program group" di window installer
+        Wine/Inno Setup menggunakan xdotool.
+
+        Strategi (robust):
+          1. Fokus & raise window, tunggu fully painted
+          2. Dapatkan geometri window (posisi + ukuran)
+          3. Klik langsung ke koordinat field pertama (Installation folder)
+             berdasarkan rasio posisi relatif window — lebih reliable dari Tab
+          4. Ctrl+A + Delete untuk clear, lalu type nilai baru karakter per karakter
+          5. Ulangi untuk field "Program group" (di bawah field pertama)
+          6. Klik tombol Next (pojok kanan bawah) atau tekan Alt+N
+        """
+        import time
+
+        def _run(cmd, timeout=5):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+                if log_fn:
+                    log_fn(f"xdotool {' '.join(str(c) for c in cmd[1:])}: rc={r.returncode}"
+                           + (f" out={r.stdout.strip()}" if r.stdout.strip() else ""))
+                return r
+            except Exception as e:
+                if log_fn:
+                    log_fn(f"xdotool error: {e}")
+                return None
+
+        def _ok(cmd, timeout=5):
+            r = _run(cmd, timeout)
+            return r is not None and r.returncode == 0
+
+        def _type_field(value: str):
+            """Ketik nilai ke field yang sedang fokus, pakai xdotool type dengan delay."""
+            # Gunakan --clearmodifiers agar Caps Lock / Shift tidak interfere
+            # --delay 30ms antar karakter agar Wine buffer tidak overflow
+            _ok(["xdotool", "key", "--window", win_id, "--clearmodifiers", "ctrl+a"])
+            time.sleep(0.08)
+            _ok(["xdotool", "key", "--window", win_id, "--clearmodifiers", "Delete"])
+            time.sleep(0.08)
+            # Type nilai — pecah per 20 karakter untuk hindari buffer drop
+            chunk = 20
+            for start in range(0, len(value), chunk):
+                part = value[start:start + chunk]
+                _ok(["xdotool", "type", "--window", win_id,
+                     "--clearmodifiers", "--delay", "30", part])
+                time.sleep(0.05)
+
+        # ── 1. Fokus & raise ────────────────────────────────────────────
+        _ok(["xdotool", "windowfocus", "--sync", win_id])
+        time.sleep(0.4)
+        _ok(["xdotool", "windowraise", win_id])
+        time.sleep(0.3)
+
+        # ── 2. Dapatkan geometri window ─────────────────────────────────
+        geo_r = _run(["xdotool", "getwindowgeometry", "--shell", win_id])
+        win_x, win_y, win_w, win_h = 0, 0, 500, 400
+        if geo_r and geo_r.returncode == 0:
+            for line in geo_r.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("X="):
+                    try: win_x = int(line.split("=")[1])
+                    except ValueError: pass
+                elif line.startswith("Y="):
+                    try: win_y = int(line.split("=")[1])
+                    except ValueError: pass
+                elif line.startswith("WIDTH="):
+                    try: win_w = int(line.split("=")[1])
+                    except ValueError: pass
+                elif line.startswith("HEIGHT="):
+                    try: win_h = int(line.split("=")[1])
+                    except ValueError: pass
+
+        if log_fn:
+            log_fn(f"Window geo: {win_x},{win_y} {win_w}x{win_h}")
+
+        # ── 3. Klik ke field "Installation folder" ──────────────────────
+        # Inno Setup layout (Weltrade/MT4/MT5):
+        #   • Field pertama  ≈ 45% dari atas, 40% dari kiri (area teks entry)
+        #   • Field kedua    ≈ 65% dari atas (Program group)
+        # Koordinat absolut = win_x + offset_x, win_y + offset_y
+        field1_abs_x = win_x + int(win_w * 0.40)
+        field1_abs_y = win_y + int(win_h * 0.45)
+        field2_abs_x = win_x + int(win_w * 0.40)
+        field2_abs_y = win_y + int(win_h * 0.64)
+
+        # Klik field 1 (Installation folder)
+        _ok(["xdotool", "mousemove", "--sync",
+             str(field1_abs_x), str(field1_abs_y)])
+        time.sleep(0.1)
+        _ok(["xdotool", "click", "1"])
+        time.sleep(0.2)
+        _ok(["xdotool", "click", "1"])   # double-click = select all text
+        time.sleep(0.15)
+
+        _type_field(dir_val)
+        time.sleep(0.25)
+
+        # ── 4. Klik ke field "Program group" ────────────────────────────
+        _ok(["xdotool", "mousemove", "--sync",
+             str(field2_abs_x), str(field2_abs_y)])
+        time.sleep(0.1)
+        _ok(["xdotool", "click", "1"])
+        time.sleep(0.2)
+        _ok(["xdotool", "click", "1"])
+        time.sleep(0.15)
+
+        _type_field(group_val)
+        time.sleep(0.25)
+
+        # ── 5. Klik Next ─────────────────────────────────────────────────
+        # Tombol Next di Inno Setup ada di kanan bawah, sekitar 75% x, 90% y
+        # Fallback: Alt+N (shortcut default Inno Setup untuk &Next)
+        next_abs_x = win_x + int(win_w * 0.76)
+        next_abs_y = win_y + int(win_h * 0.91)
+        _ok(["xdotool", "mousemove", "--sync",
+             str(next_abs_x), str(next_abs_y)])
+        time.sleep(0.1)
+        _ok(["xdotool", "click", "1"])
+        time.sleep(0.4)
+
+        # Fallback: jika Next belum terpencet (window masih sama), kirim Alt+N
+        _ok(["xdotool", "key", "--window", win_id,
+             "--clearmodifiers", "alt+n"])
+        time.sleep(0.3)
+
+        return True
+
+    def _run_mt_installer(self, installer_path: Path, qty: int, base_name: str = ""):
+        """Jalankan installer sebanyak qty kali via Wine, satu per satu.
+
+        - Deteksi tipe installer (NSIS / Inno Setup / unknown)
+        - NSIS: coba /S /D= /GROUP= (silent)
+        - Inno Setup / unknown: jalankan normal, lalu pakai xdotool untuk
+          auto-fill field "Installation folder" & "Program group"
+        - Setiap instance mendapat suffix angka: "Nama 1", "Nama 2", dst.
+        """
+        f = self._font
+
+        base_stem    = base_name.strip() if base_name.strip() else installer_path.stem
+        inst_type    = self._detect_installer_type(installer_path)
+        has_xdotool  = bool(shutil.which("xdotool"))
+
+        # ── Progress window ──────────────────────────────────────────────
+        win = tk.Toplevel(self.root)
+        win.title("Menjalankan Installer")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 240
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 140
+        win.geometry(f"480x280+{rx}+{ry}")
+        win.deiconify()
+
+        body = tk.Frame(win, bg=BG, padx=28, pady=20)
+        body.pack(fill="both", expand=True)
+
+        icon_lbl = tk.Label(body, text="\u2b07", bg=BG, fg="#5ecf3e",
+                            font=(f, 22))
+        icon_lbl.grid(row=0, column=0, rowspan=4, padx=(0, 16), sticky="n")
+
+        title_lbl = tk.Label(body, text="Memulai installer\u2026",
+                             bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w")
+        title_lbl.grid(row=0, column=1, sticky="w")
+
+        sub_lbl = tk.Label(body, text=installer_path.name,
+                           bg=BG, fg=FG2, font=(f, 9), anchor="w")
+        sub_lbl.grid(row=1, column=1, sticky="w", pady=(2, 0))
+
+        dir_var = tk.StringVar(value="")
+        dir_lbl = tk.Label(body, textvariable=dir_var,
+                           bg=BG, fg=FG3, font=(f, 8), anchor="w")
+        dir_lbl.grid(row=2, column=1, sticky="w", pady=(2, 6))
+
+        prog_frame = tk.Frame(body, bg=BG)
+        prog_frame.grid(row=3, column=1, sticky="ew")
+        body.columnconfigure(1, weight=1)
+
+        progress = ProgressBar(prog_frame, height=3, bg=BG4, fill="#5ecf3e")
+        progress.pack(fill="x")
+
+        count_var = tk.StringVar(value=f"0 / {qty}")
+        tk.Label(prog_frame, textvariable=count_var,
+                 bg=BG, fg=FG3, font=(f, 8)).pack(anchor="e", pady=(3, 0))
+
+        # method label (NSIS silent / xdotool / manual)
+        method_var = tk.StringVar(value="")
+        tk.Label(body, textvariable=method_var,
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").grid(
+                 row=4, column=1, sticky="w", pady=(4, 0))
+
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=44)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12)
+        fi.pack(fill="both", expand=True)
+
+        close_h, _ = make_pill_btn(fi, "Tutup", win.destroy,
+                                   bg=BG3, fg=FG, hover_bg=BG4,
+                                   font_size=9, padx=20, pady=6, radius=7)
+
+        _cancelled    = [False]
+        _current_proc = [None]
+
+        def _do_cancel():
+            _cancelled[0] = True
+            proc = _current_proc[0]
+            if proc and proc.poll() is None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+            icon_lbl.config(text="\u23f9", fg=WARN)
+            title_lbl.config(text="Instalasi dibatalkan.", fg=WARN)
+            sub_lbl.config(text="Proses yang sedang berjalan dihentikan.", fg=FG2)
+            dir_var.set("")
+            method_var.set("")
+            cancel_h.pack_forget()
+            close_h.pack(side="right", pady=8)
+
+        cancel_h, _ = make_pill_btn(fi, "\u2715  Cancel", _do_cancel,
+                                    bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8, padx=(0, 6))
+
+        def _do():
+            import time
+            errors   = []
+            done_cnt = [0]
+
+            for i in range(qty):
+                if _cancelled[0]:
+                    break
+
+                suffix     = f" {i + 1}" if qty > 1 else ""
+                # Nilai yang akan diisi di installer
+                dir_value  = f"{base_stem}{suffix}"   # nama folder (tanpa path lengkap)
+                group_value = f"{base_stem}{suffix}"  # nama program group
+                # Wine full path untuk NSIS /D=
+                win_path   = f"C:\\Program Files (x86)\\{dir_value}"
+
+                def _upd(idx=i, dv=dir_value):
+                    title_lbl.config(text=f"Installer {idx + 1} dari {qty}\u2026")
+                    count_var.set(f"{idx} / {qty}")
+                    progress.set(idx / qty if qty > 1 else 0.05)
+                    dir_var.set(f"\u2192 {dv}")
+                win.after(0, _upd)
+
+                # ── Tahap 1: Coba silent install ────────────────────────
+                silent_ok = False
+                if inst_type in ("inno", "nsis"):
+                    mode_label = (
+                        "Mode: Inno Setup silent (/VERYSILENT)"
+                        if inst_type == "inno"
+                        else "Mode: NSIS silent (/S)"
+                    )
+                    win.after(0, lambda ml=mode_label: method_var.set(ml))
+                    try:
+                        proc = self._try_silent_install(
+                            installer_path, inst_type,
+                            win_path, group_value,
+                        )
+                        if proc:
+                            _current_proc[0] = proc
+                            silent_ok = self._silent_succeeded(proc, win_path)
+                            _current_proc[0] = None
+                            if _cancelled[0]:
+                                break
+                            if silent_ok:
+                                done_cnt[0] += 1
+                            else:
+                                # Silent diluncurkan tapi folder tidak terbuat
+                                # → log sebagai warning, lanjut ke fallback
+                                errors.append(
+                                    f"[{i+1}] Silent gagal (folder tidak terbuat),"
+                                    f" fallback ke GUI."
+                                )
+                    except FileNotFoundError:
+                        errors.append(f"[{i+1}] wine tidak ditemukan")
+                        break
+                    except Exception as e:
+                        errors.append(f"[{i+1}] silent error: {e}")
+
+                if _cancelled[0]:
+                    break
+
+                # ── Tahap 2: Fallback GUI + xdotool (jika silent gagal) ──
+                if not silent_ok:
+                    if has_xdotool:
+                        win.after(0, lambda: method_var.set(
+                            "Fallback: xdotool auto-fill — jangan sentuh keyboard/mouse"))
+                    else:
+                        win.after(0, lambda: method_var.set(
+                            "Fallback: manual — isi folder & group sesuai nama di atas"))
+
+                    try:
+                        proc = subprocess.Popen(
+                            ["wine", str(installer_path)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                        _current_proc[0] = proc
+
+                        if has_xdotool:
+                            wine_win_id = None
+                            for _ in range(40):
+                                if _cancelled[0]:
+                                    break
+                                time.sleep(0.5)
+                                r = subprocess.run(
+                                    ["xdotool", "search", "--onlyvisible",
+                                     "--pid", str(proc.pid), "--name", ""],
+                                    capture_output=True, text=True, timeout=5,
+                                )
+                                ids = r.stdout.strip().splitlines()
+                                if not ids:
+                                    continue
+                                best_id   = None
+                                best_area = 0
+                                for wid in ids:
+                                    wid = wid.strip()
+                                    if not wid:
+                                        continue
+                                    gr = subprocess.run(
+                                        ["xdotool", "getwindowgeometry",
+                                         "--shell", wid],
+                                        capture_output=True, text=True, timeout=3,
+                                    )
+                                    if gr.returncode != 0:
+                                        continue
+                                    ww = wh = 0
+                                    for gl in gr.stdout.splitlines():
+                                        gl = gl.strip()
+                                        if gl.startswith("WIDTH="):
+                                            try: ww = int(gl.split("=")[1])
+                                            except ValueError: pass
+                                        elif gl.startswith("HEIGHT="):
+                                            try: wh = int(gl.split("=")[1])
+                                            except ValueError: pass
+                                    area = ww * wh
+                                    if area > best_area and ww >= 200 and wh >= 200:
+                                        best_area = area
+                                        best_id   = wid
+                                if best_id:
+                                    wine_win_id = best_id
+                                    break
+
+                            if wine_win_id and not _cancelled[0]:
+                                time.sleep(2.0)
+                                self._xdotool_fill_installer(
+                                    wine_win_id, dir_value, group_value)
+
+                        proc.wait()
+                        _current_proc[0] = None
+                        if not _cancelled[0]:
+                            done_cnt[0] += 1
+
+                    except FileNotFoundError:
+                        errors.append(f"[{i+1}] wine tidak ditemukan")
+                        break
+                    except Exception as e:
+                        errors.append(f"[{i+1}] {e}")
+
+            def _done():
+                if _cancelled[0]:
+                    return
+                progress.set(1.0)
+                count_var.set(f"{done_cnt[0]} / {qty}")
+                dir_var.set("")
+                method_var.set("")
+                if errors:
+                    icon_lbl.config(text="\u26a0", fg=WARN)
+                    title_lbl.config(text=f"Selesai dengan {len(errors)} error.", fg=WARN)
+                    sub_lbl.config(text="\n".join(errors[:3]), fg=DANGER)
+                else:
+                    icon_lbl.config(text="\u2713", fg="#5ecf3e")
+                    title_lbl.config(
+                        text=f"{done_cnt[0]} installer selesai dijalankan.", fg=FG)
+                    sub_lbl.config(
+                        text="Tekan Scan untuk melihat terminal baru.", fg=FG2)
+                cancel_h.pack_forget()
+                close_h.pack(side="right", pady=8)
+                self._status(
+                    f"Install MT selesai: {done_cnt[0]}/{qty} dari {installer_path.name}")
+
+            win.after(0, _done)
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _install_menu(self):
         """Dropdown menu install — popup ditutup SEBELUM yad dibuka."""
@@ -2495,11 +3208,5 @@ class MTManager:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    try:
-        _icon_path = Path(__file__).parent / "mt_manager.png"
-        _icon = tk.PhotoImage(file=str(_icon_path))
-        root.iconphoto(True, _icon)
-    except Exception:
-        pass
     app = MTManager(root)
     root.mainloop()
