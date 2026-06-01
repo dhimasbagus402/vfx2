@@ -77,12 +77,15 @@ CAT_COLORS = {
 
 # ── Autostart Toggle Config ───────────────────────────────────────────────────
 AUTOSTART_DIR    = Path.home() / ".config" / "autostart"
-AS_COL_WIDTH     = 32              # lebar kolom toggle autostart (px)
-AS_FONT_SIZE     = 15              # ukuran karakter toggle
-AS_CHAR_OFF      = "○"            # indikator off
-AS_CHAR_ON       = "◉"            # indikator on
-AS_COLOR_ON      = "#00c896"       # warna karakter saat ON
-AS_COLOR_OFF     = "#3a4555"       # warna karakter saat OFF
+# Slider dimensions
+AS_COL_WIDTH     = 48              # lebar kolom canvas slider (px)
+AS_TRACK_W       = 34              # lebar pill track
+AS_TRACK_H       = 18              # tinggi pill track
+AS_THUMB_R       = 7               # radius thumb circle
+AS_COLOR_ON      = "#00c896"       # warna track saat ON
+AS_COLOR_OFF     = "#2a3545"       # warna track saat OFF
+AS_THUMB_COL     = "#ffffff"       # warna thumb
+AS_TRACK_OFF_BDR = "#3a4a5f"       # border track saat OFF
 
 # ── Checkbox Config ────────────────────────────────────────────────────────────
 # Checkbox memakai Treeview TERPISAH (split-treeview) agar ukurannya
@@ -102,7 +105,7 @@ EXTRACT_EXTS = {".zip", ".rar", ".tar", ".gz", ".bz2", ".xz", ".7z",
 # Font: JetBrains Mono dengan fallback DejaVu Sans Mono
 FONT        = "San Francisco"
 FONT_MONO   = "San Francisco"
-SIDEBAR_W   = 210
+SIDEBAR_W   = 230
 
 
 # ── Font resolver ──────────────────────────────────────────────────────────────
@@ -634,16 +637,6 @@ class MTManager:
         s.map("Cat.Treeview.Heading",
             background=[("active", BG4)], relief=[("active", "flat")])
 
-        # AutoStart toggle treeview (kolom ○/◉ di sebelah kiri terminal list)
-        s.configure("AS.Treeview",
-            background=BG2, foreground=AS_COLOR_OFF, fieldbackground=BG2,
-            rowheight=44, font=(f, AS_FONT_SIZE),
-            borderwidth=0, relief="flat",
-            highlightthickness=0, highlightbackground=BG2, highlightcolor=BG2)
-        s.map("AS.Treeview",
-            background=[("selected", BG2)],
-            foreground=[("selected", AS_COLOR_OFF)])
-
         # Side treeview (terminal list) — no headings shown
         s.configure("Side.Treeview",
             background=BG2, foreground=FG, fieldbackground=BG2,
@@ -670,9 +663,7 @@ class MTManager:
         s.layout("Side.Treeview", [
             ("Treeview.treearea", {"sticky": "nswe"})
         ])
-        s.layout("AS.Treeview", [
-            ("Treeview.treearea", {"sticky": "nswe"})
-        ])
+
 
     # ── UI ─────────────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -754,20 +745,21 @@ class MTManager:
         sb_side.pack(side="right", fill="y", padx=(0, 2), pady=3)
         self._sb_side_ref = sb_side   # referensi untuk _on_side_scroll
 
-        # ── AutoStart toggle tree (kiri, kolom ○/◉ independen) ──
-        self.as_tree = ttk.Treeview(
+        # ── AutoStart slider canvas (kiri, menggantikan Treeview) ──
+        self._as_canvas = tk.Canvas(
             tlist_box.inner,
-            columns=("tog",),
-            show="",
-            selectmode="none",
-            style="AS.Treeview",
+            width=AS_COL_WIDTH, bg=BG2,
+            highlightthickness=0, cursor="hand2",
         )
-        self.as_tree.column("tog", width=AS_COL_WIDTH, anchor="center", stretch=False)
-        self.as_tree.pack(side="left", fill="y")
-        self.as_tree.tag_configure("as_on",  foreground=AS_COLOR_ON)
-        self.as_tree.tag_configure("as_off", foreground=AS_COLOR_OFF)
-        self.as_tree.tag_configure("as_grp", foreground=BG2)   # grup: invisible
-        self.as_tree.bind("<Button-1>", self._on_as_click)
+        self._as_canvas.pack(side="left", fill="y")
+        self._as_canvas.bind("<Button-1>",  self._on_as_click)
+        self._as_canvas.bind("<Motion>",    self._on_as_motion)
+        self._as_canvas.bind("<Leave>",     self._on_as_leave)
+        self._as_canvas.bind("<Configure>", lambda e: self._draw_as_canvas())
+        # tooltip hover state
+        self._as_hover_iid  = None
+        self._as_tooltip_id = None
+        self._as_tooltip_win = None
 
         # ── Terminal tree (kanan, konten utama) ──
         self.term_tree = ttk.Treeview(
@@ -787,9 +779,9 @@ class MTManager:
         self.term_tree.bind("<MouseWheel>", lambda e: self._side_wheel(e))
         self.term_tree.bind("<Button-4>",   lambda e: self._side_wheel(e))
         self.term_tree.bind("<Button-5>",   lambda e: self._side_wheel(e))
-        self.as_tree.bind("<MouseWheel>",   lambda e: self._side_wheel(e))
-        self.as_tree.bind("<Button-4>",     lambda e: self._side_wheel(e))
-        self.as_tree.bind("<Button-5>",     lambda e: self._side_wheel(e))
+        self._as_canvas.bind("<MouseWheel>",   lambda e: self._side_wheel(e))
+        self._as_canvas.bind("<Button-4>",     lambda e: self._side_wheel(e))
+        self._as_canvas.bind("<Button-5>",     lambda e: self._side_wheel(e))
         self.term_tree.tag_configure("MT4", foreground=WHITE)
         self.term_tree.tag_configure("MT5", foreground=WHITE)
         self.term_tree.tag_configure("group", foreground=FG3, font=(f, 8))
@@ -1760,18 +1752,18 @@ class MTManager:
     # ── Scrollbar proxies ──────────────────────────────────────────────────────
     def _term_yview(self, *args):
         self.term_tree.yview(*args)
-        self.as_tree.yview(*args)
+        self._draw_as_canvas()
 
     def _on_side_scroll(self, first, last):
-        """Dipanggil saat term_tree scroll — sync as_tree + scrollbar."""
-        self.as_tree.yview_moveto(first)
+        """Dipanggil saat term_tree scroll — redraw canvas + scrollbar."""
         self._sb_side_ref.set(first, last)
+        self._draw_as_canvas()
 
     def _side_wheel(self, e):
-        """Sync wheel scroll di kedua sidebar tree."""
+        """Sync wheel scroll di sidebar."""
         delta = -3 if (e.num == 4 or e.delta > 0) else 3
         self.term_tree.yview_scroll(delta, "units")
-        self.as_tree.yview_scroll(delta, "units")
+        self._draw_as_canvas()
         return "break"
 
     def _file_yview(self, *args):
@@ -2169,28 +2161,23 @@ class MTManager:
     # ── Scan ───────────────────────────────────────────────────────────────────
     # ── AutoStart helpers ─────────────────────────────────────────────────────
     def _autostart_desktop_path(self, t: dict) -> Path:
-        """Return path file .desktop untuk terminal t."""
-        # Nama file diambil dari nama folder instalasi, spasi → underscore
         safe = t["name"].replace(" ", "_").replace("/", "_")
         return AUTOSTART_DIR / f"{safe}.desktop"
 
     def _autostart_is_on(self, t: dict) -> bool:
         return self._autostart_desktop_path(t).exists()
 
-    def _autostart_set(self, t: dict, enable: bool):
-        """Buat atau hapus file .desktop untuk terminal t."""
+    def _autostart_set(self, t: dict, enable: bool) -> bool:
         dst = self._autostart_desktop_path(t)
         if enable:
             AUTOSTART_DIR.mkdir(parents=True, exist_ok=True)
-            # Tentukan exe yang akan dijalankan
             exe = self._find_exe(t, "terminal.exe", "terminal64.exe")
             if exe is None:
                 messagebox.showerror("Autostart Gagal",
                     f"File terminal.exe / terminal64.exe tidak ditemukan\n"
-                    f"untuk {t['name']} ({t['type']}).\n\n"
-                    f"Autostart tidak dapat dibuat.")
+                    f"untuk {t['name']} ({t['type']}).\n\nAutostart tidak dapat dibuat.")
                 return False
-            content = (
+            dst.write_text(
                 "[Desktop Entry]\n"
                 "Type=Application\n"
                 f"Name={t['name']}\n"
@@ -2199,41 +2186,165 @@ class MTManager:
                 "NoDisplay=false\n"
                 "X-GNOME-Autostart-enabled=true\n"
             )
-            dst.write_text(content)
             return True
-        else:
-            try:
-                dst.unlink(missing_ok=True)
-            except Exception:
-                pass
-            return False
+        try:
+            dst.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
+
+    # ── Canvas slider drawing ──────────────────────────────────────────────────
+    def _draw_as_canvas(self):
+        """Render semua slider pill di canvas, disinkronkan dengan posisi scroll term_tree."""
+        c = self._as_canvas
+        c.delete("all")
+        cw = c.winfo_width()
+        ch = c.winfo_height()
+        if cw < 4 or ch < 4:
+            return
+        rh  = 44          # row height Side.Treeview
+        iid_map = getattr(self, "_iid_to_terminal", {})
+        # Ambil semua iid di term_tree termasuk grup, dalam urutan tampil
+        all_rows = self.term_tree.get_children()
+        if not all_rows:
+            return
+        # Hitung offset vertikal berdasarkan scroll position term_tree
+        yview = self.term_tree.yview()          # (first, last) fraksi 0..1
+        total_rows = len(all_rows)
+        scroll_offset = int(yview[0] * total_rows * rh)
+        cx = cw // 2
+        tw = AS_TRACK_W
+        th = AS_TRACK_H
+        hover = getattr(self, "_as_hover_iid", None)
+        for idx, iid in enumerate(all_rows):
+            y_center = idx * rh + rh // 2 - scroll_offset
+            if y_center < -rh or y_center > ch + rh:
+                continue
+            is_group = iid not in iid_map
+            if is_group:
+                continue  # baris grup: kosong
+            t   = iid_map[iid]
+            on  = self._autostart_is_on(t)
+            is_hover = (iid == hover)
+            # track
+            tx1 = cx - tw // 2
+            ty1 = y_center - th // 2
+            tx2 = cx + tw // 2
+            ty2 = y_center + th // 2
+            tr  = th // 2
+            track_col = AS_COLOR_ON if on else AS_COLOR_OFF
+            if is_hover:
+                # sedikit lebih terang saat hover
+                track_col = "#00e6ac" if on else "#3a5570"
+            # gambar track pill
+            c.create_arc(tx1, ty1, tx1 + th, ty2, start=90, extent=180,
+                         fill=track_col, outline="")
+            c.create_arc(tx2 - th, ty1, tx2, ty2, start=270, extent=180,
+                         fill=track_col, outline="")
+            c.create_rectangle(tx1 + tr, ty1, tx2 - tr, ty2,
+                                fill=track_col, outline="")
+            # gambar thumb circle
+            thumb_r = AS_THUMB_R
+            if on:
+                thumb_cx = tx2 - tr
+            else:
+                thumb_cx = tx1 + tr
+            c.create_oval(
+                thumb_cx - thumb_r, y_center - thumb_r,
+                thumb_cx + thumb_r, y_center + thumb_r,
+                fill=AS_THUMB_COL, outline="",
+            )
+        # tag area untuk hit-test di _on_as_click / _on_as_motion
+        c.addtag_all("slider_canvas")
+
+    def _as_y_to_iid(self, y: int):
+        """Konversi koordinat y di canvas ke iid terminal (atau None jika grup/miss)."""
+        rh = 44
+        all_rows = self.term_tree.get_children()
+        if not all_rows:
+            return None
+        yview = self.term_tree.yview()
+        total_rows = len(all_rows)
+        scroll_offset = int(yview[0] * total_rows * rh)
+        idx = (y + scroll_offset) // rh
+        if idx < 0 or idx >= len(all_rows):
+            return None
+        iid = all_rows[idx]
+        iid_map = getattr(self, "_iid_to_terminal", {})
+        return iid if iid in iid_map else None
 
     def _on_as_click(self, event):
-        """Toggle autostart saat baris di as_tree diklik."""
-        iid = self.as_tree.identify_row(event.y)
-        if not iid:
+        """Toggle autostart saat slider diklik."""
+        iid = self._as_y_to_iid(event.y)
+        if iid is None:
             return
-        t = getattr(self, "_iid_to_terminal", {}).get(iid)
-        if t is None:
-            return   # klik di baris grup — abaikan
-        currently_on = self._autostart_is_on(t)
-        new_state = not currently_on
+        t = self._iid_to_terminal[iid]
+        new_state = not self._autostart_is_on(t)
         ok = self._autostart_set(t, new_state)
         if new_state and not ok:
-            return   # gagal buat .desktop
-        char  = AS_CHAR_ON  if new_state else AS_CHAR_OFF
-        tag   = "as_on"     if new_state else "as_off"
-        self.as_tree.item(iid, values=(char,), tags=(tag,))
-        state_str = "ON" if new_state else "OFF"
-        self._status(f"Autostart {t['name']} → {state_str}")
+            return
+        self._draw_as_canvas()
+        self._status(f"Autostart {t['name']} → {'ON' if new_state else 'OFF'}")
 
-    def _refresh_as_tree(self):
-        """Sync ulang ikon ○/◉ setelah scan berdasarkan kondisi file .desktop."""
-        for iid, t in getattr(self, "_iid_to_terminal", {}).items():
-            on = self._autostart_is_on(t)
-            char = AS_CHAR_ON  if on else AS_CHAR_OFF
-            tag  = "as_on"     if on else "as_off"
-            self.as_tree.item(iid, values=(char,), tags=(tag,))
+    def _on_as_motion(self, event):
+        """Hover highlight + tooltip."""
+        iid = self._as_y_to_iid(event.y)
+        if iid != self._as_hover_iid:
+            self._as_hover_iid = iid
+            self._draw_as_canvas()
+            self._as_cancel_tooltip()
+            if iid is not None:
+                self._as_tooltip_id = self._as_canvas.after(
+                    280, lambda: self._as_show_tooltip(event.x_root, event.y_root)
+                )
+
+    def _on_as_leave(self, _=None):
+        if self._as_hover_iid is not None:
+            self._as_hover_iid = None
+            self._draw_as_canvas()
+        self._as_cancel_tooltip()
+
+    def _as_cancel_tooltip(self):
+        if self._as_tooltip_id:
+            self._as_canvas.after_cancel(self._as_tooltip_id)
+            self._as_tooltip_id = None
+        if self._as_tooltip_win:
+            try:
+                self._as_tooltip_win.destroy()
+            except Exception:
+                pass
+            self._as_tooltip_win = None
+
+    def _as_show_tooltip(self, rx, ry):
+        """Tampilkan tooltip autostart."""
+        if self._as_tooltip_win:
+            return
+        tw = tk.Toplevel(self.root)
+        tw.wm_overrideredirect(True)
+        tw.configure(bg=BORDER2)
+        tw.attributes("-topmost", True)
+        outer = tk.Frame(tw, bg=BORDER2, padx=1, pady=1)
+        outer.pack()
+        inner = tk.Frame(outer, bg=BG3, padx=12, pady=7)
+        inner.pack()
+        f = self._font
+        tk.Label(inner, text="Aktifkan/Nonaktifkan autostart MT saat VPS restart",
+                 bg=BG3, fg=FG2, font=(f, 9), wraplength=260, justify="left").pack()
+        tw.update_idletasks()
+        tw_ = tw.winfo_reqwidth()
+        th_ = tw.winfo_reqheight()
+        x   = rx + 14
+        y   = ry + 18
+        sw  = tw.winfo_screenwidth()
+        sh  = tw.winfo_screenheight()
+        if x + tw_ > sw: x = rx - tw_ - 6
+        if y + th_ > sh: y = ry - th_ - 6
+        tw.wm_geometry(f"+{x}+{y}")
+        self._as_tooltip_win = tw
+
+    def _refresh_as_canvas(self):
+        """Alias publik — redraw canvas setelah scan."""
+        self._draw_as_canvas()
 
     def scan_terminals(self, silent=False):
         self.term_tree.delete(*self.term_tree.get_children())
@@ -2336,7 +2447,6 @@ class MTManager:
         f = self._font
         cur_type = None
         self._iid_to_terminal = {}
-        self.as_tree.delete(*self.as_tree.get_children())
         for item in self.terminals:
             if item["type"] != cur_type:
                 cur_type = item["type"]
@@ -2344,21 +2454,14 @@ class MTManager:
                 self.term_tree.insert("", "end",
                     values=("", label, ""),
                     tags=("group",))
-                # baris grup di as_tree: invisible, hanya untuk menjaga sinkronisasi tinggi
-                self.as_tree.insert("", "end",
-                    values=("",),
-                    tags=("as_grp",))
             iid = self.term_tree.insert("", "end",
                 values=("MT4" if item["type"] == "MT4" else "MT5",
                     item["name"],
                     item["type"]),
                 tags=(item["type"],))
             self._iid_to_terminal[iid] = item
-            # insert baris toggle dengan iid yang SAMA agar sync mudah
-            on = self._autostart_is_on(item)
-            self.as_tree.insert("", "end", iid=iid,
-                values=(AS_CHAR_ON if on else AS_CHAR_OFF,),
-                tags=("as_on" if on else "as_off",))
+        # Redraw slider canvas setelah semua baris diisi
+        self.root.after(50, self._draw_as_canvas)
 
         n = len(self.terminals)
         if hasattr(self, "_term_count_var"):
