@@ -108,8 +108,9 @@ FONT_MONO   = "San Francisco"
 SIDEBAR_W   = 250
 
 
-# ── Font resolver ──────────────────────────────────────────────────────────────
-_FONT_CACHE: dict = {}
+# ── Font resolver + shared tkf.Font cache ─────────────────────────────────────
+_FONT_CACHE: dict = {}       # family name cache
+_FONT_OBJ_CACHE: dict = {}   # tkf.Font object cache keyed (family, size, weight)
 
 def resolve_font(preferred, fallback="DejaVu Sans Mono"):
     if preferred in _FONT_CACHE:
@@ -121,6 +122,13 @@ def resolve_font(preferred, fallback="DejaVu Sans Mono"):
         result = fallback
     _FONT_CACHE[preferred] = result
     return result
+
+def get_font_obj(family, size, weight="normal"):
+    """Return cached tkf.Font — satu object per (family, size, weight)."""
+    key = (family, size, weight)
+    if key not in _FONT_OBJ_CACHE:
+        _FONT_OBJ_CACHE[key] = tkf.Font(family=family, size=size, weight=weight)
+    return _FONT_OBJ_CACHE[key]
 
 
 # ── Rounded Canvas Container ───────────────────────────────────────────────────
@@ -288,8 +296,12 @@ class RoundScrollbar(tk.Canvas):
                 self._redraw()
 
     def _on_leave(self, _=None):
-        self._hover_zone = None
-        self._redraw()
+        if self._hover_zone is not None:
+            self._hover_zone = None
+            if self.find_withtag("thumb_shape"):
+                self._update_hover()
+            else:
+                self._redraw()
 
     def _on_press(self, e):
         zone = self._zone(e.y)
@@ -352,13 +364,14 @@ class RoundScrollbar(tk.Canvas):
 
 # ── Tooltip ────────────────────────────────────────────────────────────────────
 class Tooltip:
+    """Tooltip ringan: satu Toplevel di-reuse (withdraw/deiconify) bukan destroy/recreate."""
     def __init__(self, widget, text, delay=280, position="below"):
         self.widget   = widget
         self.text     = text
         self.delay    = delay
-        self.position = position  # kept for compat, tooltip follows cursor
         self._id      = None
-        self._win     = None
+        self._win     = None   # dibuat sekali, lalu disembunyikan
+        self._lbl     = None
         self._cx      = 0
         self._cy      = 0
         widget.bind("<Enter>",  self._schedule)
@@ -382,21 +395,34 @@ class Tooltip:
             self.widget.after_cancel(self._id)
             self._id = None
         if self._win:
-            self._win.destroy()
-            self._win = None
+            self._win.withdraw()
 
-    def _show(self):
+    def _build(self):
+        """Buat Toplevel sekali — selanjutnya cukup update teks + posisi."""
         tw = tk.Toplevel(self.widget)
         tw.wm_overrideredirect(True)
         tw.configure(bg=BORDER2)
         tw.attributes("-topmost", True)
+        tw.withdraw()
         outer = tk.Frame(tw, bg=BORDER2, padx=1, pady=1)
         outer.pack()
         inner = tk.Frame(outer, bg=BG3, padx=12, pady=7)
         inner.pack()
         _f = resolve_font(FONT)
-        tk.Label(inner, text=self.text, bg=BG3, fg=FG2,
-                 font=(_f, 9), justify="left", wraplength=380).pack()
+        lbl = tk.Label(inner, text=self.text, bg=BG3, fg=FG2,
+                       font=(_f, 9), justify="left", wraplength=380)
+        lbl.pack()
+        self._win = tw
+        self._lbl = lbl
+
+    def _show(self):
+        if self._win is None:
+            self._build()
+        # Update teks jika berubah (untuk tooltip dinamis)
+        if self._lbl["text"] != self.text:
+            self._lbl.config(text=self.text)
+        tw = self._win
+        tw.deiconify()
         tw.update_idletasks()
         tw_ = tw.winfo_reqwidth()
         th_ = tw.winfo_reqheight()
@@ -404,12 +430,9 @@ class Tooltip:
         y = self._cy + 18
         sw = tw.winfo_screenwidth()
         sh = tw.winfo_screenheight()
-        if x + tw_ > sw:
-            x = self._cx - tw_ - 6
-        if y + th_ > sh:
-            y = self._cy - th_ - 6
+        if x + tw_ > sw: x = self._cx - tw_ - 6
+        if y + th_ > sh: y = self._cy - th_ - 6
         tw.wm_geometry(f"+{x}+{y}")
-        self._win = tw
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -470,7 +493,9 @@ def make_pill_btn(parent, text, cmd, bg, fg, hover_bg,
     canvas = tk.Canvas(holder, bg=outer_bg, highlightthickness=0, cursor="hand2")
     canvas.pack(fill="x" if fill_x else "none", expand=fill_x)
     _state = {"bg": bg}
-    _f = resolve_font(FONT)
+    _f   = resolve_font(FONT)
+    _fnt = get_font_obj(_f, font_size, "bold")   # cached — tidak buat object baru
+    _ftuple = (_f, font_size, "bold")
 
     def _draw(b=None):
         bcolor = b or _state["bg"]
@@ -483,8 +508,7 @@ def make_pill_btn(parent, text, cmd, bg, fg, hover_bg,
         pts = [r,0, w-r,0, w,0, w,r, w,h-r, w,h, w-r,h, r,h,
                0,h, 0,h-r, 0,r, 0,0, r,0]
         canvas.create_polygon(pts, smooth=True, fill=bcolor, outline="")
-        canvas.create_text(w//2, h//2, text=text, fill=fg,
-                           font=(_f, font_size, "bold"))
+        canvas.create_text(w//2, h//2, text=text, fill=fg, font=_ftuple)
 
     def _enter(_=None): _state["bg"] = hover_bg; _draw(hover_bg)
     def _leave(_=None): _state["bg"] = bg;       _draw(bg)
@@ -495,7 +519,6 @@ def make_pill_btn(parent, text, cmd, bg, fg, hover_bg,
     canvas.bind("<Leave>",     _leave)
     canvas.bind("<Button-1>",  _click)
 
-    _fnt = tkf.Font(family=_f, size=font_size, weight="bold")
     rw = _fnt.measure(text) + padx * 2
     rh = _fnt.metrics("linespace") + pady * 2
     canvas.config(height=rh, width=rw if not fill_x else 1)
@@ -509,9 +532,8 @@ make_rounded_btn = make_pill_btn
 class Badge(tk.Canvas):
     """Small pill badge — e.g. 'MT4' in blue, 'MT5' in teal."""
     def __init__(self, parent, text, bg_color, fg_color, radius=4, **kw):
-        _f = resolve_font(FONT)
-        # measure text tanpa membuat widget sementara
-        _fnt = tkf.Font(family=_f, size=8, weight="bold")
+        _f   = resolve_font(FONT)
+        _fnt = get_font_obj(_f, 8, "bold")   # cached
         w = _fnt.measure(text) + 5 * 2 + 2
         h = _fnt.metrics("linespace") + 2 * 2
         outer = parent.cget("bg") if hasattr(parent, "cget") else BG2
@@ -568,10 +590,12 @@ class MTManager:
         self.root.resizable(True, True)
         self.root.minsize(900, 520)
         self.root.after(0, lambda: self.root.attributes("-zoomed", True))
-        self.terminals   = []
-        self._font       = resolve_font(FONT)
-        self._font_mono  = resolve_font(FONT_MONO)
-        self._cfg        = _load_config()
+        self.terminals      = []
+        self._font          = resolve_font(FONT)
+        self._font_mono     = resolve_font(FONT_MONO)
+        self._cfg           = _load_config()
+        self._as_state_cache = {}    # cache Path.exists() per iid untuk slider canvas
+        self._all_term_rows  = ()    # cache get_children() setelah scan
         self._build_styles()
         self._build_ui()
         self.scan_terminals(silent=True)   # startup: tanpa popup "Scan Selesai"
@@ -2195,83 +2219,87 @@ class MTManager:
 
     # ── Canvas slider drawing ──────────────────────────────────────────────────
     def _draw_as_canvas(self):
-        """Render semua slider pill di canvas, disinkronkan dengan posisi scroll term_tree."""
-        c = self._as_canvas
-        c.delete("all")
+        """Render semua slider pill (debounced, cached rows, polygon pill)."""
+        # Debounce: batalkan jadwal sebelumnya
+        if getattr(self, "_as_draw_id", None):
+            self._as_canvas.after_cancel(self._as_draw_id)
+        self._as_draw_id = self._as_canvas.after(8, self._do_draw_as_canvas)
+
+    def _do_draw_as_canvas(self):
+        self._as_draw_id = None
+        c  = self._as_canvas
         cw = c.winfo_width()
         ch = c.winfo_height()
         if cw < 4 or ch < 4:
             return
-        rh  = 44          # row height Side.Treeview
+        c.delete("all")
+        rh      = 44
         iid_map = getattr(self, "_iid_to_terminal", {})
-        # Ambil semua iid di term_tree termasuk grup, dalam urutan tampil
-        all_rows = self.term_tree.get_children()
+        # Pakai cache dari scan — tidak memanggil get_children() setiap frame
+        all_rows = getattr(self, "_all_term_rows", None) or self.term_tree.get_children()
         if not all_rows:
             return
-        # Hitung offset vertikal berdasarkan scroll position term_tree
-        yview = self.term_tree.yview()          # (first, last) fraksi 0..1
-        total_rows = len(all_rows)
-        scroll_offset = int(yview[0] * total_rows * rh)
-        cx = cw // 2
-        tw = AS_TRACK_W
-        th = AS_TRACK_H
+        yview        = self.term_tree.yview()
+        scroll_offset = int(yview[0] * len(all_rows) * rh)
+        cx    = cw // 2
+        tw    = AS_TRACK_W
+        th    = AS_TRACK_H
+        tr    = th >> 1          # th // 2, bitshift lebih cepat
+        thumb_r = AS_THUMB_R
         hover = getattr(self, "_as_hover_iid", None)
+        # Pre-compute x coords (sama untuk semua baris)
+        tx1 = cx - (tw >> 1)
+        tx2 = cx + (tw >> 1)
+        # Pre-compute autostart state cache untuk batch ini (hindari Path.exists per frame)
+        as_cache = self._as_state_cache
+
         for idx, iid in enumerate(all_rows):
-            y_center = idx * rh + rh // 2 - scroll_offset
+            if iid not in iid_map:
+                continue   # grup header
+            y_center = idx * rh + (rh >> 1) - scroll_offset
             if y_center < -rh or y_center > ch + rh:
                 continue
-            is_group = iid not in iid_map
-            if is_group:
-                continue  # baris grup: kosong
-            t   = iid_map[iid]
-            on  = self._autostart_is_on(t)
-            is_hover = (iid == hover)
-            # track
-            tx1 = cx - tw // 2
-            ty1 = y_center - th // 2
-            tx2 = cx + tw // 2
-            ty2 = y_center + th // 2
-            tr  = th // 2
-            track_col = AS_COLOR_ON if on else AS_COLOR_OFF
+            on = as_cache.get(iid)
+            if on is None:       # cache miss — baca filesystem
+                on = self._autostart_is_on(iid_map[iid])
+                as_cache[iid] = on
+            is_hover  = (iid == hover)
+            ty1 = y_center - (th >> 1)
+            ty2 = y_center + (th >> 1)
+            track_col = (AS_COLOR_ON if on else AS_COLOR_OFF)
             if is_hover:
-                # sedikit lebih terang saat hover
                 track_col = "#00e6ac" if on else "#3a5570"
-            # gambar track pill
-            c.create_arc(tx1, ty1, tx1 + th, ty2, start=90, extent=180,
-                         fill=track_col, outline="")
-            c.create_arc(tx2 - th, ty1, tx2, ty2, start=270, extent=180,
-                         fill=track_col, outline="")
-            c.create_rectangle(tx1 + tr, ty1, tx2 - tr, ty2,
-                                fill=track_col, outline="")
-            # gambar thumb circle
-            thumb_r = AS_THUMB_R
-            if on:
-                thumb_cx = tx2 - tr
-            else:
-                thumb_cx = tx1 + tr
+            # Pill track: 1 polygon (8 titik) menggantikan 3 arc/rect panggilan
+            r   = tr
+            pts = [tx1+r, ty1,  tx2-r, ty1,
+                   tx2,   ty1,  tx2,   ty1+r,
+                   tx2,   ty2-r, tx2,  ty2,
+                   tx2-r, ty2,  tx1+r, ty2,
+                   tx1,   ty2,  tx1,   ty2-r,
+                   tx1,   ty1+r, tx1,  ty1,
+                   tx1+r, ty1]
+            c.create_polygon(pts, smooth=True, fill=track_col, outline="")
+            # Thumb
+            thumb_cx = (tx2 - r) if on else (tx1 + r)
             c.create_oval(
                 thumb_cx - thumb_r, y_center - thumb_r,
                 thumb_cx + thumb_r, y_center + thumb_r,
                 fill=AS_THUMB_COL, outline="",
             )
-        # tag area untuk hit-test di _on_as_click / _on_as_motion
-        c.addtag_all("slider_canvas")
 
     def _as_y_to_iid(self, y: int):
         """Konversi koordinat y di canvas ke iid terminal (atau None jika grup/miss)."""
-        rh = 44
-        all_rows = self.term_tree.get_children()
+        rh       = 44
+        all_rows = getattr(self, "_all_term_rows", None) or self.term_tree.get_children()
         if not all_rows:
             return None
-        yview = self.term_tree.yview()
-        total_rows = len(all_rows)
-        scroll_offset = int(yview[0] * total_rows * rh)
+        yview        = self.term_tree.yview()
+        scroll_offset = int(yview[0] * len(all_rows) * rh)
         idx = (y + scroll_offset) // rh
         if idx < 0 or idx >= len(all_rows):
             return None
         iid = all_rows[idx]
-        iid_map = getattr(self, "_iid_to_terminal", {})
-        return iid if iid in iid_map else None
+        return iid if iid in getattr(self, "_iid_to_terminal", {}) else None
 
     def _on_as_click(self, event):
         """Toggle autostart saat slider diklik."""
@@ -2283,6 +2311,8 @@ class MTManager:
         ok = self._autostart_set(t, new_state)
         if new_state and not ok:
             return
+        # Invalidate cache untuk baris ini saja
+        self._as_state_cache[iid] = new_state
         self._draw_as_canvas()
         self._status(f"Autostart {t['name']} → {'ON' if new_state else 'OFF'}")
 
@@ -2350,6 +2380,7 @@ class MTManager:
         self.term_tree.delete(*self.term_tree.get_children())
         self.file_tree.delete(*self.file_tree.get_children())
         self.terminals.clear()
+        self._as_state_cache.clear()
         home = Path.home()
 
         for base in [home / ".wine/drive_c/Program Files",
@@ -2366,60 +2397,48 @@ class MTManager:
                         "scripts": mql5 / "Scripts",  "logs": mt_dir / "logs",
                     })
 
-        def _mt4_name(folder):
-            origin = folder / "origin.txt"
-            if origin.exists():
-                try:
-                    raw = origin.read_bytes().decode("utf-16", errors="ignore").strip()
-                    name = raw.split("\\")[-1].strip()
-                    if name:
-                        return name
-                except Exception:
-                    pass
-            return folder.name[:22]
-
-        def _mt4_install_path(folder):
-            """Baca origin.txt → konversi path Windows ke path Linux/Wine."""
+        def _parse_origin(folder):
+            """Baca origin.txt SEKALI → return (name, install_path).  Sebelumnya dibaca 2x."""
             origin = folder / "origin.txt"
             if not origin.exists():
-                return None
-            raw_bytes = origin.read_bytes()
+                return folder.name[:22], None
+            try:
+                raw_bytes = origin.read_bytes()
+            except OSError:
+                return folder.name[:22], None
+            # Decode dengan beberapa encoding
             raw = None
-            # Coba berbagai encoding: UTF-16 LE (BOM), UTF-16 BE, UTF-8, latin-1
             for enc in ("utf-16", "utf-16-le", "utf-16-be", "utf-8", "latin-1"):
                 try:
-                    decoded = raw_bytes.decode(enc, errors="strict")
-                    # Buang null bytes sisa UTF-16 yang di-decode salah
-                    decoded = decoded.replace("\x00", "").strip()
-                    if decoded and ("\\" in decoded or ":" in decoded):
-                        raw = decoded
-                        break
+                    dec = raw_bytes.decode(enc, errors="strict").replace("\x00", "").strip()
+                    if dec and ("\\" in dec or ":" in dec):
+                        raw = dec; break
                 except (UnicodeDecodeError, ValueError):
                     continue
             if not raw:
-                # Last resort: decode dengan ignore
                 raw = raw_bytes.decode("utf-16", errors="ignore").replace("\x00", "").strip()
             if not raw:
-                return None
+                return folder.name[:22], None
+            # Baris pertama = path Windows instalasi
+            line = raw.splitlines()[0].strip()
+            # Nama folder dari bagian akhir path
+            name = (line.replace("\\", "/").rstrip("/").split("/")[-1].strip()
+                    or folder.name[:22])
+            # Konversi ke path Linux/Wine
+            install = None
             try:
-                # Ambil baris pertama saja (kadang ada newline di akhir)
-                raw = raw.splitlines()[0].strip()
-                # Konversi backslash Windows ke forward slash
-                win_path = raw.replace("\\", "/").strip().rstrip("/")
-                # Buang drive letter "C:/" di awal
-                if len(win_path) >= 3 and win_path[1] == ":":
-                    win_path = win_path[3:]   # "Program Files (x86)/FBS Trader 4 (MT4)"
-                if not win_path:
-                    return None
-                home = Path.home()
-                for wine_c in [home / ".wine" / "drive_c",
-                               home / "Games"  / "drive_c"]:
-                    candidate = wine_c / win_path
-                    if candidate.exists():
-                        return candidate
+                wp = line.replace("\\", "/").strip().rstrip("/")
+                if len(wp) >= 3 and wp[1] == ":":
+                    wp = wp[3:]
+                if wp:
+                    _h = Path.home()
+                    for wc in (_h / ".wine/drive_c", _h / "Games/drive_c"):
+                        c = wc / wp
+                        if c.exists():
+                            install = c; break
             except Exception:
                 pass
-            return None
+            return name, install
 
         users_dir = home / ".wine/drive_c/users"
         if users_dir.exists():
@@ -2430,9 +2449,10 @@ class MTManager:
                 for folder in tb.iterdir():
                     mql4 = folder / "MQL4"
                     if mql4.exists():
+                        _n4, _ip4 = _parse_origin(folder)
                         self.terminals.append({
-                            "type": "MT4", "name": _mt4_name(folder), "path": str(folder),
-                            "install_path": _mt4_install_path(folder),  # path instalasi asli
+                            "type": "MT4", "name": _n4, "path": str(folder),
+                            "install_path": _ip4,
                             "experts": mql4 / "Experts", "indicators": mql4 / "Indicators",
                             "scripts": mql4 / "Scripts",  "logs": folder / "logs",
                         })
@@ -2460,6 +2480,8 @@ class MTManager:
                     item["type"]),
                 tags=(item["type"],))
             self._iid_to_terminal[iid] = item
+        # Cache urutan baris untuk _draw_as_canvas + _as_y_to_iid
+        self._all_term_rows = self.term_tree.get_children()
         # Redraw slider canvas setelah semua baris diisi
         self.root.after(50, self._draw_as_canvas)
 
