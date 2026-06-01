@@ -1686,8 +1686,8 @@ class MTManager:
         win.attributes("-topmost", True)
         win.update_idletasks()
         rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 270
-        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 160
-        win.geometry(f"540x320+{rx}+{ry}")
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 200
+        win.geometry(f"540x400+{rx}+{ry}")
         win.deiconify()
 
         # Header
@@ -1755,7 +1755,43 @@ class MTManager:
                               font_size=10, padx=12, pady=7, radius=7)
         bh.pack(side="left")
 
-        # Baris 2: Jumlah instance
+        # Baris 2: Base name folder & group
+        tk.Label(body, text="NAMA FOLDER & PROGRAM GROUP",
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x", pady=(0, 0))
+
+        name_border = tk.Frame(body, bg=BORDER2, padx=1, pady=1)
+        name_border.pack(fill="x", pady=(4, 4))
+        basename_var = tk.StringVar(value="")
+        basename_entry = tk.Entry(
+            name_border, textvariable=basename_var,
+            bg=BG3, fg=FG, insertbackground=ACCENT,
+            relief="flat", font=(fm, 9), highlightthickness=0,
+        )
+        basename_entry.pack(fill="x", ipady=7, padx=1)
+
+        # hint label — update dinamis berdasarkan qty
+        hint_var = tk.StringVar(value="")
+        hint_lbl = tk.Label(body, textvariable=hint_var,
+                            bg=BG, fg=FG3, font=(f, 8), anchor="w")
+        hint_lbl.pack(fill="x", pady=(0, 10))
+
+        def _update_hint(*_):
+            name = basename_var.get().strip()
+            q    = qty_var.get() if hasattr(qty_var, "get") else 1
+            if not name:
+                hint_var.set("")
+                return
+            if q == 1:
+                hint_var.set(f"\u2192  C:\\Program Files (x86)\\{name}")
+            else:
+                examples = ", ".join(f"{name} {n}" for n in range(1, min(q, 3) + 1))
+                if q > 3:
+                    examples += ", \u2026"
+                hint_var.set(f"\u2192  {examples}")
+
+        basename_var.trace_add("write", _update_hint)
+
+        # Baris 3: Jumlah instance
         tk.Label(body, text="JUMLAH INSTALASI",
                  bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
 
@@ -1763,6 +1799,7 @@ class MTManager:
         qty_row.pack(fill="x", pady=(4, 0))
 
         qty_var = tk.IntVar(value=1)
+        qty_var.trace_add("write", _update_hint)
 
         def _set_qty(v):
             try:
@@ -1805,7 +1842,7 @@ class MTManager:
         status_var = tk.StringVar(value="")
         status_lbl = tk.Label(body, textvariable=status_var,
                               bg=BG, fg=FG3, font=(f, 9), anchor="w")
-        status_lbl.pack(fill="x", pady=(12, 0))
+        status_lbl.pack(fill="x", pady=(10, 0))
 
         # Footer
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
@@ -1825,9 +1862,14 @@ class MTManager:
                 status_var.set("\u26a0  File tidak ditemukan.")
                 status_lbl.config(fg=DANGER)
                 return
+            base = basename_var.get().strip()
+            if not base:
+                status_var.set("\u26a0  Isi nama folder & program group.")
+                status_lbl.config(fg=WARN)
+                return
             qty = qty_var.get()
             win.destroy()
-            self._run_mt_installer(Path(path), qty)
+            self._run_mt_installer(Path(path), qty, base_name=base)
 
         run_h, _ = make_pill_btn(fi, "\u2b07  Mulai Install", _run_install,
                                  bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
@@ -1839,27 +1881,39 @@ class MTManager:
                                     font_size=9, padx=20, pady=6, radius=7)
         cancel_h.pack(side="right", pady=8)
 
-    def _run_mt_installer(self, installer_path: Path, qty: int):
-        """Jalankan installer sebanyak qty kali via Wine, satu per satu."""
+    def _run_mt_installer(self, installer_path: Path, qty: int, base_name: str = ""):
+        """Jalankan installer sebanyak qty kali via Wine secara silent, satu per satu.
+
+        Silent install menggunakan argumen NSIS standar:
+          /S          — silent mode (tidak ada UI installer)
+          /D=<path>   — override Installation folder  (wine path, pakai backslash)
+          /GROUP=<n>  — override Program group name
+
+        Setiap instance mendapat suffix angka di akhir folder & group name,
+        mis. "MetaTrader 4 EXNESS 1", "MetaTrader 4 EXNESS 2", dst.
+        """
         f = self._font
 
+        base_stem = base_name.strip() if base_name.strip() else installer_path.stem
+
+        # ── Progress window ──────────────────────────────────────────────
         win = tk.Toplevel(self.root)
         win.title("Menjalankan Installer")
         win.configure(bg=BG)
         win.resizable(False, False)
-        win.attributes("-topmost", True)
+        # TIDAK pakai -topmost agar window installer tidak tertutup
         win.update_idletasks()
-        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 220
-        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 110
-        win.geometry(f"440x220+{rx}+{ry}")
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 240
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 130
+        win.geometry(f"480x260+{rx}+{ry}")
         win.deiconify()
 
-        body = tk.Frame(win, bg=BG, padx=28, pady=24)
+        body = tk.Frame(win, bg=BG, padx=28, pady=20)
         body.pack(fill="both", expand=True)
 
         icon_lbl = tk.Label(body, text="\u2b07", bg=BG, fg="#5ecf3e",
                             font=(f, 22))
-        icon_lbl.grid(row=0, column=0, rowspan=3, padx=(0, 16), sticky="n")
+        icon_lbl.grid(row=0, column=0, rowspan=4, padx=(0, 16), sticky="n")
 
         title_lbl = tk.Label(body, text="Memulai installer\u2026",
                              bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w")
@@ -1867,10 +1921,16 @@ class MTManager:
 
         sub_lbl = tk.Label(body, text=installer_path.name,
                            bg=BG, fg=FG2, font=(f, 9), anchor="w")
-        sub_lbl.grid(row=1, column=1, sticky="w", pady=(2, 8))
+        sub_lbl.grid(row=1, column=1, sticky="w", pady=(2, 0))
+
+        # label folder saat ini
+        dir_var = tk.StringVar(value="")
+        dir_lbl = tk.Label(body, textvariable=dir_var,
+                           bg=BG, fg=FG3, font=(f, 8), anchor="w")
+        dir_lbl.grid(row=2, column=1, sticky="w", pady=(2, 6))
 
         prog_frame = tk.Frame(body, bg=BG)
-        prog_frame.grid(row=2, column=1, sticky="ew")
+        prog_frame.grid(row=3, column=1, sticky="ew")
         body.columnconfigure(1, weight=1)
 
         progress = ProgressBar(prog_frame, height=3, bg=BG4, fill="#5ecf3e")
@@ -1890,23 +1950,83 @@ class MTManager:
         close_h, _ = make_pill_btn(fi, "Tutup", win.destroy,
                                    bg=BG3, fg=FG, hover_bg=BG4,
                                    font_size=9, padx=20, pady=6, radius=7)
-        # tombol tutup muncul setelah selesai / error
+        # tombol tutup & cancel — diatur visibilitasnya saat runtime
+
+        # ── Cancel state ─────────────────────────────────────────────────
+        _cancelled   = [False]
+        _current_proc = [None]   # subprocess.Popen aktif saat ini
+
+        def _do_cancel():
+            _cancelled[0] = True
+            proc = _current_proc[0]
+            if proc and proc.poll() is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            icon_lbl.config(text="\u23f9", fg=WARN)
+            title_lbl.config(text="Instalasi dibatalkan.", fg=WARN)
+            sub_lbl.config(text="Proses yang sedang berjalan dihentikan.", fg=FG2)
+            dir_var.set("")
+            cancel_h.pack_forget()
+            close_h.pack(side="right", pady=8)
+
+        cancel_h, _ = make_pill_btn(fi, "\u2715  Cancel", _do_cancel,
+                                    bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8, padx=(0, 6))
 
         def _do():
-            errors = []
+            errors   = []
+            done_cnt = [0]
+
             for i in range(qty):
-                def _upd(idx=i):
-                    title_lbl.config(text=f"Menjalankan installer {idx + 1} dari {qty}\u2026")
+                if _cancelled[0]:
+                    break
+
+                # ── Hitung folder & group name untuk instance ini ────────
+                suffix      = f" {i + 1}" if qty > 1 else ""
+                # Wine path: C:\Program Files (x86)\<base_stem><suffix>
+                win_install = f"C:\\Program Files (x86)\\{base_stem}{suffix}"
+                group_name  = f"{base_stem}{suffix}"
+
+                def _upd(idx=i, wdir=win_install):
+                    title_lbl.config(
+                        text=f"Menginstall {idx + 1} dari {qty}\u2026  (silent)")
                     count_var.set(f"{idx} / {qty}")
-                    progress.set(idx / qty if qty > 1 else 0)
+                    progress.set(idx / qty if qty > 1 else 0.05)
+                    dir_var.set(f"\u2192 {wdir}")
                 win.after(0, _upd)
 
                 try:
-                    subprocess.run(
-                        ["wine", str(installer_path)],
+                    # Argumen silent NSIS:
+                    #   /S            — no UI
+                    #   /D=<winpath>  — target folder (HARUS argumen terakhir, no quotes)
+                    #   /GROUP=<n>    — program group (didukung installer MT4/MT5)
+                    cmd = [
+                        "wine", str(installer_path),
+                        "/S",
+                        f"/GROUP={group_name}",
+                        f"/D={win_install}",   # /D= HARUS paling akhir (NSIS requirement)
+                    ]
+                    proc = subprocess.Popen(
+                        cmd,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
+                    _current_proc[0] = proc
+                    proc.wait()   # tunggu selesai sebelum lanjut ke instance berikutnya
+                    _current_proc[0] = None
+
+                    if _cancelled[0]:
+                        break
+
+                    if proc.returncode not in (0, None):
+                        errors.append(
+                            f"[{i+1}] exit code {proc.returncode}")
+
+                    done_cnt[0] += 1
+
                 except FileNotFoundError:
                     errors.append(f"[{i+1}] wine tidak ditemukan")
                     break
@@ -1914,20 +2034,26 @@ class MTManager:
                     errors.append(f"[{i+1}] {e}")
 
             def _done():
+                if _cancelled[0]:
+                    return   # UI sudah diatur oleh _do_cancel
                 progress.set(1.0)
-                count_var.set(f"{qty} / {qty}")
+                count_var.set(f"{done_cnt[0]} / {qty}")
+                dir_var.set("")
                 if errors:
                     icon_lbl.config(text="\u26a0", fg=WARN)
-                    title_lbl.config(text=f"Selesai dengan {len(errors)} error.", fg=WARN)
+                    title_lbl.config(
+                        text=f"Selesai dengan {len(errors)} error.", fg=WARN)
                     sub_lbl.config(text="\n".join(errors[:3]), fg=DANGER)
                 else:
                     icon_lbl.config(text="\u2713", fg="#5ecf3e")
-                    title_lbl.config(text=f"{qty} installer selesai dijalankan.", fg=FG)
+                    title_lbl.config(
+                        text=f"{done_cnt[0]} installer selesai dijalankan.", fg=FG)
                     sub_lbl.config(
                         text="Tekan Scan untuk melihat terminal baru.", fg=FG2)
+                cancel_h.pack_forget()
                 close_h.pack(side="right", pady=8)
                 self._status(
-                    f"Install MT selesai: {qty} instance dari {installer_path.name}")
+                    f"Install MT selesai: {done_cnt[0]}/{qty} dari {installer_path.name}")
 
             win.after(0, _done)
 
