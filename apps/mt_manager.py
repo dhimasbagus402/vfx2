@@ -75,6 +75,15 @@ CAT_COLORS = {
     "Log":       "#e8edf5",    # putih
 }
 
+# ── Autostart Toggle Config ───────────────────────────────────────────────────
+AUTOSTART_DIR    = Path.home() / ".config" / "autostart"
+AS_COL_WIDTH     = 32              # lebar kolom toggle autostart (px)
+AS_FONT_SIZE     = 15              # ukuran karakter toggle
+AS_CHAR_OFF      = "○"            # indikator off
+AS_CHAR_ON       = "◉"            # indikator on
+AS_COLOR_ON      = "#00c896"       # warna karakter saat ON
+AS_COLOR_OFF     = "#3a4555"       # warna karakter saat OFF
+
 # ── Checkbox Config ────────────────────────────────────────────────────────────
 # Checkbox memakai Treeview TERPISAH (split-treeview) agar ukurannya
 # 100% independen dari font teks kolom data di sebelah kanan.
@@ -625,6 +634,16 @@ class MTManager:
         s.map("Cat.Treeview.Heading",
             background=[("active", BG4)], relief=[("active", "flat")])
 
+        # AutoStart toggle treeview (kolom ○/◉ di sebelah kiri terminal list)
+        s.configure("AS.Treeview",
+            background=BG2, foreground=AS_COLOR_OFF, fieldbackground=BG2,
+            rowheight=44, font=(f, AS_FONT_SIZE),
+            borderwidth=0, relief="flat",
+            highlightthickness=0, highlightbackground=BG2, highlightcolor=BG2)
+        s.map("AS.Treeview",
+            background=[("selected", BG2)],
+            foreground=[("selected", AS_COLOR_OFF)])
+
         # Side treeview (terminal list) — no headings shown
         s.configure("Side.Treeview",
             background=BG2, foreground=FG, fieldbackground=BG2,
@@ -649,6 +668,9 @@ class MTManager:
             ("Treeview.treearea", {"sticky": "nswe"})
         ])
         s.layout("Side.Treeview", [
+            ("Treeview.treearea", {"sticky": "nswe"})
+        ])
+        s.layout("AS.Treeview", [
             ("Treeview.treearea", {"sticky": "nswe"})
         ])
 
@@ -730,14 +752,31 @@ class MTManager:
 
         sb_side = RoundScrollbar(tlist_box.inner, command=self._term_yview)
         sb_side.pack(side="right", fill="y", padx=(0, 2), pady=3)
+        self._sb_side_ref = sb_side   # referensi untuk _on_side_scroll
 
+        # ── AutoStart toggle tree (kiri, kolom ○/◉ independen) ──
+        self.as_tree = ttk.Treeview(
+            tlist_box.inner,
+            columns=("tog",),
+            show="",
+            selectmode="none",
+            style="AS.Treeview",
+        )
+        self.as_tree.column("tog", width=AS_COL_WIDTH, anchor="center", stretch=False)
+        self.as_tree.pack(side="left", fill="y")
+        self.as_tree.tag_configure("as_on",  foreground=AS_COLOR_ON)
+        self.as_tree.tag_configure("as_off", foreground=AS_COLOR_OFF)
+        self.as_tree.tag_configure("as_grp", foreground=BG2)   # grup: invisible
+        self.as_tree.bind("<Button-1>", self._on_as_click)
+
+        # ── Terminal tree (kanan, konten utama) ──
         self.term_tree = ttk.Treeview(
             tlist_box.inner,
             columns=("badge", "name", "sub"),
             show="",          # no headings
             selectmode="browse",
             style="Side.Treeview",
-            yscrollcommand=sb_side.set,
+            yscrollcommand=self._on_side_scroll,
         )
         self.term_tree.config(style="Side.Treeview")
         self.term_tree.column("badge", width=38, anchor="center", stretch=False)
@@ -745,10 +784,15 @@ class MTManager:
         self.term_tree.column("sub",   width=80, anchor="w", stretch=False)
         self.term_tree.pack(side="left", fill="both", expand=True)
         self.term_tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.term_tree.bind("<MouseWheel>", lambda e: self._side_wheel(e))
+        self.term_tree.bind("<Button-4>",   lambda e: self._side_wheel(e))
+        self.term_tree.bind("<Button-5>",   lambda e: self._side_wheel(e))
+        self.as_tree.bind("<MouseWheel>",   lambda e: self._side_wheel(e))
+        self.as_tree.bind("<Button-4>",     lambda e: self._side_wheel(e))
+        self.as_tree.bind("<Button-5>",     lambda e: self._side_wheel(e))
         self.term_tree.tag_configure("MT4", foreground=WHITE)
         self.term_tree.tag_configure("MT5", foreground=WHITE)
-        self.term_tree.tag_configure("group", foreground=FG3,
-                                     font=(f, 8))
+        self.term_tree.tag_configure("group", foreground=FG3, font=(f, 8))
 
         # ── MAIN PANEL ───────────────────────────────────────────────────
         main = tk.Frame(body, bg=BG)
@@ -1716,6 +1760,19 @@ class MTManager:
     # ── Scrollbar proxies ──────────────────────────────────────────────────────
     def _term_yview(self, *args):
         self.term_tree.yview(*args)
+        self.as_tree.yview(*args)
+
+    def _on_side_scroll(self, first, last):
+        """Dipanggil saat term_tree scroll — sync as_tree + scrollbar."""
+        self.as_tree.yview_moveto(first)
+        self._sb_side_ref.set(first, last)
+
+    def _side_wheel(self, e):
+        """Sync wheel scroll di kedua sidebar tree."""
+        delta = -3 if (e.num == 4 or e.delta > 0) else 3
+        self.term_tree.yview_scroll(delta, "units")
+        self.as_tree.yview_scroll(delta, "units")
+        return "break"
 
     def _file_yview(self, *args):
         """Scroll ketiga treeview (chk + cat + data) bersama."""
@@ -2110,6 +2167,74 @@ class MTManager:
         threading.Thread(target=_run, daemon=True).start()
 
     # ── Scan ───────────────────────────────────────────────────────────────────
+    # ── AutoStart helpers ─────────────────────────────────────────────────────
+    def _autostart_desktop_path(self, t: dict) -> Path:
+        """Return path file .desktop untuk terminal t."""
+        # Nama file diambil dari nama folder instalasi, spasi → underscore
+        safe = t["name"].replace(" ", "_").replace("/", "_")
+        return AUTOSTART_DIR / f"{safe}.desktop"
+
+    def _autostart_is_on(self, t: dict) -> bool:
+        return self._autostart_desktop_path(t).exists()
+
+    def _autostart_set(self, t: dict, enable: bool):
+        """Buat atau hapus file .desktop untuk terminal t."""
+        dst = self._autostart_desktop_path(t)
+        if enable:
+            AUTOSTART_DIR.mkdir(parents=True, exist_ok=True)
+            # Tentukan exe yang akan dijalankan
+            exe = self._find_exe(t, "terminal.exe", "terminal64.exe")
+            if exe is None:
+                messagebox.showerror("Autostart Gagal",
+                    f"File terminal.exe / terminal64.exe tidak ditemukan\n"
+                    f"untuk {t['name']} ({t['type']}).\n\n"
+                    f"Autostart tidak dapat dibuat.")
+                return False
+            content = (
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                f"Name={t['name']}\n"
+                f"Exec=wine \"{exe}\"\n"
+                "Hidden=false\n"
+                "NoDisplay=false\n"
+                "X-GNOME-Autostart-enabled=true\n"
+            )
+            dst.write_text(content)
+            return True
+        else:
+            try:
+                dst.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return False
+
+    def _on_as_click(self, event):
+        """Toggle autostart saat baris di as_tree diklik."""
+        iid = self.as_tree.identify_row(event.y)
+        if not iid:
+            return
+        t = getattr(self, "_iid_to_terminal", {}).get(iid)
+        if t is None:
+            return   # klik di baris grup — abaikan
+        currently_on = self._autostart_is_on(t)
+        new_state = not currently_on
+        ok = self._autostart_set(t, new_state)
+        if new_state and not ok:
+            return   # gagal buat .desktop
+        char  = AS_CHAR_ON  if new_state else AS_CHAR_OFF
+        tag   = "as_on"     if new_state else "as_off"
+        self.as_tree.item(iid, values=(char,), tags=(tag,))
+        state_str = "ON" if new_state else "OFF"
+        self._status(f"Autostart {t['name']} → {state_str}")
+
+    def _refresh_as_tree(self):
+        """Sync ulang ikon ○/◉ setelah scan berdasarkan kondisi file .desktop."""
+        for iid, t in getattr(self, "_iid_to_terminal", {}).items():
+            on = self._autostart_is_on(t)
+            char = AS_CHAR_ON  if on else AS_CHAR_OFF
+            tag  = "as_on"     if on else "as_off"
+            self.as_tree.item(iid, values=(char,), tags=(tag,))
+
     def scan_terminals(self, silent=False):
         self.term_tree.delete(*self.term_tree.get_children())
         self.file_tree.delete(*self.file_tree.get_children())
@@ -2211,6 +2336,7 @@ class MTManager:
         f = self._font
         cur_type = None
         self._iid_to_terminal = {}
+        self.as_tree.delete(*self.as_tree.get_children())
         for item in self.terminals:
             if item["type"] != cur_type:
                 cur_type = item["type"]
@@ -2218,13 +2344,21 @@ class MTManager:
                 self.term_tree.insert("", "end",
                     values=("", label, ""),
                     tags=("group",))
-            badge = "MT4" if item["type"] == "MT4" else "MT5"
+                # baris grup di as_tree: invisible, hanya untuk menjaga sinkronisasi tinggi
+                self.as_tree.insert("", "end",
+                    values=("",),
+                    tags=("as_grp",))
             iid = self.term_tree.insert("", "end",
                 values=("MT4" if item["type"] == "MT4" else "MT5",
                     item["name"],
                     item["type"]),
                 tags=(item["type"],))
             self._iid_to_terminal[iid] = item
+            # insert baris toggle dengan iid yang SAMA agar sync mudah
+            on = self._autostart_is_on(item)
+            self.as_tree.insert("", "end", iid=iid,
+                values=(AS_CHAR_ON if on else AS_CHAR_OFF,),
+                tags=("as_on" if on else "as_off",))
 
         n = len(self.terminals)
         if hasattr(self, "_term_count_var"):
