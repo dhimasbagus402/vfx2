@@ -2731,31 +2731,78 @@ class MTManager:
         cancel_h.pack(side="right", pady=8, padx=(0, 6))
 
         def _do():
-            errors   = []
-            done_cnt = [0]
+            import time
+            errors    = []
+            done_cnt  = [0]
+            launched  = []   # list Path folder yang berhasil dicopy
 
+            # ── Fase 1: Copy ────────────────────────────────────────────────
             for i in range(qty):
                 if _cancelled[0]:
                     break
-                num      = i + 2          # mulai dari 2
+                num      = i + 2
                 dst_name = f"{base_name} {num}"
                 dst_path = linux_base / dst_name
 
                 def _upd(dn=dst_name, idx=i):
                     title_lbl.config(text=f"Menduplikat {idx + 1} dari {qty}\u2026")
                     count_var.set(f"{idx} / {qty}")
-                    progress.set(idx / qty if qty > 1 else 0.05)
+                    progress.set((idx / qty) * 0.5 if qty > 1 else 0.05)
                     dir_var.set(f"\u2192 {dn}")
                 win.after(0, _upd)
 
                 try:
                     if dst_path.exists():
                         errors.append(f"[{num}] Folder sudah ada: {dst_name}")
+                        launched.append(dst_path)   # tetap coba launch nanti
                         continue
                     shutil.copytree(str(src_folder), str(dst_path))
                     done_cnt[0] += 1
+                    launched.append(dst_path)
                 except Exception as e:
-                    errors.append(f"[{num}] {e}")
+                    errors.append(f"[{num}] Copy gagal: {e}")
+
+            if _cancelled[0]:
+                return
+
+            # ── Fase 2: Launch terminal.exe / terminal64.exe ─────────────
+            exe_name = "terminal64.exe" if mt_type == "MT5" else "terminal.exe"
+            launch_errors = []
+
+            for j, dst_path in enumerate(launched):
+                if _cancelled[0]:
+                    break
+                exe_path = dst_path / exe_name
+
+                def _upd_launch(dn=dst_path.name, idx=j, total=len(launched)):
+                    title_lbl.config(
+                        text=f"Menjalankan MT {idx + 1} dari {total}\u2026")
+                    count_var.set(f"{idx + 1} / {total}")
+                    progress.set(0.5 + (idx / max(total, 1)) * 0.5)
+                    dir_var.set(f"\u25b6 {dn}\\{exe_name}")
+                win.after(0, _upd_launch)
+
+                if not exe_path.exists():
+                    launch_errors.append(
+                        f"[{dst_path.name}] {exe_name} tidak ditemukan")
+                else:
+                    try:
+                        subprocess.Popen(
+                            ["wine", str(exe_path)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                    except Exception as e:
+                        launch_errors.append(f"[{dst_path.name}] {e}")
+
+                # Delay 5 detik sebelum launch berikutnya (kecuali yang terakhir)
+                if j < len(launched) - 1:
+                    for _ in range(50):   # 50 × 0.1s = 5s, bisa dicancel
+                        if _cancelled[0]:
+                            break
+                        time.sleep(0.1)
+
+            all_errors = errors + launch_errors
 
             def _done():
                 if _cancelled[0]:
@@ -2763,14 +2810,15 @@ class MTManager:
                 progress.set(1.0)
                 count_var.set(f"{done_cnt[0]} / {qty}")
                 dir_var.set("")
-                if errors:
+                if all_errors:
                     icon_lbl.config(text="\u26a0", fg=WARN)
-                    title_lbl.config(text=f"Selesai dengan {len(errors)} error.", fg=WARN)
-                    dir_lbl.config(text="\n".join(errors[:3]), fg=DANGER)
+                    title_lbl.config(
+                        text=f"Selesai dengan {len(all_errors)} error.", fg=WARN)
+                    dir_lbl.config(text="\n".join(all_errors[:3]), fg=DANGER)
                 else:
                     icon_lbl.config(text="\u2713", fg=WARN)
                     title_lbl.config(
-                        text=f"{done_cnt[0]} duplikat berhasil dibuat.", fg=FG)
+                        text=f"{done_cnt[0]} duplikat dibuat & dijalankan.", fg=FG)
                     dir_lbl.config(
                         text="Tekan Scan untuk melihat terminal baru.", fg=FG2)
                 cancel_h.pack_forget()
