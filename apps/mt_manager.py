@@ -1627,6 +1627,8 @@ class MTManager:
         def _run_uninstall():
             win.destroy()
             self._wine_launch(uninstall_exe, f"Uninstall {t['name']}({t['type']})")
+            # Scan ulang setelah uninstall selesai (delay 3s beri waktu wine tutup)
+            self.root.after(3000, self.scan_terminals)
 
         run_h, _ = make_pill_btn(fi, "⚠  Lanjutkan Uninstall", _run_uninstall,
                                  bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
@@ -2276,11 +2278,12 @@ class MTManager:
                     title_lbl.config(
                         text=f"{done_cnt[0]} installer selesai dijalankan.", fg=FG)
                     sub_lbl.config(
-                        text="Tekan Scan untuk melihat terminal baru.", fg=FG2)
+                        text="Scan otomatis dijalankan.", fg=FG2)
                 cancel_h.pack_forget()
                 close_h.pack(side="right", pady=8)
                 self._status(
                     f"Install MT selesai: {done_cnt[0]}/{qty} dari {installer_path.name}")
+                self.root.after(800, self.scan_terminals)
 
             win.after(0, _done)
 
@@ -2826,11 +2829,12 @@ class MTManager:
                     title_lbl.config(
                         text=f"{done_cnt[0]} duplikat dibuat & dijalankan.", fg=FG)
                     dir_lbl.config(
-                        text="Tekan Scan untuk melihat terminal baru.", fg=FG2)
+                        text="Scan otomatis dijalankan.", fg=FG2)
                 cancel_h.pack_forget()
                 close_h.pack(side="right", pady=8)
                 self._status(
                     f"Duplikat MT selesai: {done_cnt[0]}/{qty} dari {src_folder.name}")
+                self.root.after(800, self.scan_terminals)
 
             win.after(0, _done)
 
@@ -3049,7 +3053,41 @@ class MTManager:
         shutil.copy(fp, dest)
         self._reload_files(t)
         self._status(f"'{dest.name}' berhasil diinstall \u2192 {dst}")
-        messagebox.showinfo("Berhasil", f"{label} diinstall ke:\n{dst}")
+        # ── Popup hasil install EA/Indicator ─────────────────────────
+        _f = self._font
+        _fm = self._font_mono
+        res = tk.Toplevel(self.root)
+        res.title("Install Berhasil"); res.configure(bg=BG)
+        res.resizable(False, False); res.attributes("-topmost", True)
+        hdr_r = tk.Frame(res, bg=BG2, height=48)
+        hdr_r.pack(fill="x"); hdr_r.pack_propagate(False)
+        hdr_ri = tk.Frame(hdr_r, bg=BG2, padx=20)
+        hdr_ri.pack(fill="both", expand=True)
+        tk.Label(hdr_ri, text="\u2713  Install Berhasil",
+                 bg=BG2, fg="#5ecf3e", font=(_f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+        body_r = tk.Frame(res, bg=BG, padx=24, pady=18)
+        body_r.pack(fill="both", expand=True)
+        ico = tk.Label(body_r, text="\u2713", bg=BG, fg="#5ecf3e", font=(_f, 22))
+        ico.grid(row=0, column=0, rowspan=2, padx=(0, 16), sticky="n")
+        tk.Label(body_r, text=f"{label} berhasil diinstall.",
+                 bg=BG, fg=FG, font=(_f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+        tk.Label(body_r, text=str(dst),
+                 bg=BG, fg=FG3, font=(_fm, 8), anchor="w", wraplength=340).grid(
+                 row=1, column=1, sticky="w", pady=(4, 0))
+        body_r.columnconfigure(1, weight=1)
+        tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+        foot_r = tk.Frame(res, bg=BG2, height=44); foot_r.pack(fill="x")
+        foot_r.pack_propagate(False)
+        fi_r = tk.Frame(foot_r, bg=BG2, padx=12); fi_r.pack(fill="both", expand=True)
+        oh_r, _ = make_pill_btn(fi_r, "OK", res.destroy,
+                                bg=BG3, fg=FG, hover_bg=BG4,
+                                font_size=9, padx=20, pady=6, radius=7)
+        oh_r.pack(side="right", pady=8)
+        res.update_idletasks()
+        _rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - res.winfo_reqwidth()  // 2
+        _ry = self.root.winfo_y() + self.root.winfo_height() // 2 - res.winfo_reqheight() // 2
+        res.geometry(f"+{_rx}+{_ry}"); res.deiconify(); res.lift(); res.focus_force()
 
     def install_ea(self):
         self._install("experts", "EA")
@@ -3062,14 +3100,97 @@ class MTManager:
         t = self._terminal()
         if not t:
             return
+        f  = self._font
+        fm = self._font_mono
 
-        # --- multi-delete: use checked set if any are checked ---
+        def _confirm_delete_popup(title, items_label, item_count, detail_lines, on_confirm):
+            dlg = tk.Toplevel(self.root)
+            dlg.title(title); dlg.configure(bg=BG)
+            dlg.resizable(False, False); dlg.attributes("-topmost", True)
+            hdr = tk.Frame(dlg, bg=BG2, height=48)
+            hdr.pack(fill="x"); hdr.pack_propagate(False)
+            hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
+            hdr_inner.pack(fill="both", expand=True)
+            tk.Label(hdr_inner, text=f"\u232b  {title}",
+                     bg=BG2, fg=DANGER, font=(f, 12, "bold")).pack(side="left", fill="y")
+            tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+            body = tk.Frame(dlg, bg=BG, padx=24, pady=18)
+            body.pack(fill="both", expand=True)
+            info_box = tk.Frame(body, bg=BG3, padx=14, pady=10)
+            info_box.pack(fill="x", pady=(0, 10))
+            tk.Label(info_box, text=items_label, bg=BG3, fg=FG2,
+                     font=(f, 10, "bold"), anchor="w").pack(anchor="w", pady=(0, 6))
+            for line in detail_lines[:8]:
+                tk.Label(info_box, text=f"  {line}", bg=BG3, fg=FG3,
+                         font=(fm, 8), anchor="w").pack(anchor="w")
+            if len(detail_lines) > 8:
+                tk.Label(info_box, text=f"  \u2026 dan {len(detail_lines)-8} file lainnya",
+                         bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
+            tk.Label(body, text="Tindakan ini tidak dapat dibatalkan.",
+                     bg=BG, fg=FG2, font=(f, 9), anchor="w").pack(anchor="w", pady=(0, 4))
+            tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+            foot = tk.Frame(dlg, bg=BG2, height=50); foot.pack(fill="x")
+            foot.pack_propagate(False)
+            fi_f = tk.Frame(foot, bg=BG2, padx=14); fi_f.pack(fill="both", expand=True)
+            def _do():
+                dlg.destroy()
+                on_confirm()
+            del_h, _ = make_pill_btn(fi_f, f"\u232b  Hapus {item_count} File", _do,
+                                     bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
+                                     font_size=10, padx=20, pady=7, radius=7)
+            del_h.pack(side="right", pady=8, padx=(0, 6))
+            can_h, _ = make_pill_btn(fi_f, "Batal", dlg.destroy,
+                                     bg=BG3, fg=FG, hover_bg=BG4,
+                                     font_size=9, padx=20, pady=6, radius=7)
+            can_h.pack(side="right", pady=8)
+            dlg.update_idletasks()
+            rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - dlg.winfo_reqwidth()  // 2
+            ry = self.root.winfo_y() + self.root.winfo_height() // 2 - dlg.winfo_reqheight() // 2
+            dlg.geometry(f"+{rx}+{ry}"); dlg.deiconify(); dlg.lift(); dlg.focus_force()
+
+        def _result_popup(deleted, errors):
+            res = tk.Toplevel(self.root)
+            res.title("File Dihapus"); res.configure(bg=BG)
+            res.resizable(False, False); res.attributes("-topmost", True)
+            ok_icon = "\u2713" if not errors else "\u26a0"
+            ok_fg   = "#5ecf3e" if not errors else WARN
+            hdr2 = tk.Frame(res, bg=BG2, height=48)
+            hdr2.pack(fill="x"); hdr2.pack_propagate(False)
+            hdr2i = tk.Frame(hdr2, bg=BG2, padx=20)
+            hdr2i.pack(fill="both", expand=True)
+            tk.Label(hdr2i, text=f"{ok_icon}  File Dihapus",
+                     bg=BG2, fg=ok_fg, font=(f, 12, "bold")).pack(side="left", fill="y")
+            tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+            body2 = tk.Frame(res, bg=BG, padx=24, pady=18)
+            body2.pack(fill="both", expand=True)
+            icon_lbl = tk.Label(body2, text=ok_icon, bg=BG, fg=ok_fg, font=(f, 22))
+            icon_lbl.grid(row=0, column=0, rowspan=2, padx=(0, 16), sticky="n")
+            tk.Label(body2, text=f"{deleted} file berhasil dihapus.",
+                     bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+            if errors:
+                tk.Label(body2, text="\n".join(errors[:3]),
+                         bg=BG, fg=DANGER, font=(f, 9), anchor="w", wraplength=340).grid(
+                         row=1, column=1, sticky="w", pady=(4, 0))
+            body2.columnconfigure(1, weight=1)
+            tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+            foot2 = tk.Frame(res, bg=BG2, height=44); foot2.pack(fill="x")
+            foot2.pack_propagate(False)
+            fi2 = tk.Frame(foot2, bg=BG2, padx=12); fi2.pack(fill="both", expand=True)
+            oh, _ = make_pill_btn(fi2, "OK", res.destroy,
+                                  bg=BG3, fg=FG, hover_bg=BG4,
+                                  font_size=9, padx=20, pady=6, radius=7)
+            oh.pack(side="right", pady=8)
+            res.update_idletasks()
+            rx2 = self.root.winfo_x() + self.root.winfo_width()  // 2 - res.winfo_reqwidth()  // 2
+            ry2 = self.root.winfo_y() + self.root.winfo_height() // 2 - res.winfo_reqheight() // 2
+            res.geometry(f"+{rx2}+{ry2}"); res.deiconify(); res.lift(); res.focus_force()
+
+        # ── Multi-delete ──────────────────────────────────────────────────
         if self._checked:
             targets = []
             for iid in list(self._checked):
                 try:
-                    v = self.file_tree.item(iid, "values")
-                    # file_tree values: (name[0], type[1], size[2], modified[3])
+                    v     = self.file_tree.item(iid, "values")
                     fname = v[0]
                     cat   = self.cat_tree.item(iid, "values")[0]
                     path  = self._folder_for(t, cat) / fname
@@ -3077,83 +3198,219 @@ class MTManager:
                 except Exception:
                     pass
             if not targets:
-                messagebox.showwarning("Perhatian", "File yang dipilih tidak valid.")
+                self._status("Perhatian: file yang dipilih tidak valid.")
                 return
-            names_str = "\n".join(f"  • {n}" for n, _ in targets[:20])
-            if len(targets) > 20:
-                names_str += f"\n  ... dan {len(targets)-20} file lainnya"
-            if not messagebox.askyesno("Konfirmasi Hapus",
-                    f"Hapus {len(targets)} file berikut?\n\n{names_str}\n\n"
-                    "Tindakan ini tidak dapat dibatalkan."):
-                return
-            deleted, errors = 0, []
-            for fname, path in targets:
-                try:
-                    if path.exists():
-                        path.unlink(); deleted += 1
-                    else:
-                        errors.append(f"{fname}: tidak ditemukan")
-                except Exception as e:
-                    errors.append(f"{fname}: {e}")
-            self._reload_files(t)
-            msg = f"{deleted} file berhasil dihapus."
-            if errors:
-                msg += f"\n\nGagal ({len(errors)}):\n" + "\n".join(errors)
-            self._status(f"{deleted} file dihapus.")
-            messagebox.showinfo("Selesai", msg)
+            def _do_multi():
+                deleted, errors = 0, []
+                for fname, path in targets:
+                    try:
+                        if path.exists():
+                            path.unlink(); deleted += 1
+                        else:
+                            errors.append(f"{fname}: tidak ditemukan")
+                    except Exception as e:
+                        errors.append(f"{fname}: {e}")
+                self._reload_files(t)
+                self._status(f"{deleted} file dihapus.")
+                _result_popup(deleted, errors)
+            _confirm_delete_popup(
+                "Konfirmasi Hapus",
+                f"Hapus {len(targets)} file berikut?",
+                len(targets),
+                [n for n, _ in targets],
+                _do_multi,
+            )
             return
 
-        # --- single-delete: fallback to selected row ---
+        # ── Single-delete ─────────────────────────────────────────────────
         cat, fname = self._file_info()
         if not fname:
-            messagebox.showwarning("Perhatian",
-                "Centang file yang ingin dihapus, atau pilih satu baris dari tabel.")
+            self._status("Centang file yang ingin dihapus, atau pilih satu baris dari tabel.")
             return
         target = self._folder_for(t, cat) / fname
         if not target.exists():
-            messagebox.showerror("Error", f"File tidak ditemukan:\n{target}")
+            self._status(f"File tidak ditemukan: {target}")
             return
-        if messagebox.askyesno("Konfirmasi Hapus", f"Hapus file ini?\n\n{target}"):
+        def _do_single():
             target.unlink()
             self._reload_files(t)
             self._status(f"\'{fname}\' dihapus.")
+        _confirm_delete_popup(
+            "Konfirmasi Hapus", "Hapus file ini?", 1, [str(target)], _do_single)
+
 
     # ── Clear Logs ─────────────────────────────────────────────────────────────
     def clear_logs(self):
         t = self._terminal()
         if not t:
             return
+        f  = self._font
+        fm = self._font_mono
         logs_dir = t.get("logs")
+
+        # ── Helper: popup info ringan (tanpa tombol konfirmasi) ──────────
+        def _info_popup(title, msg, icon="\u2139", icon_fg=ACCENT):
+            w = tk.Toplevel(self.root)
+            w.title(title)
+            w.configure(bg=BG)
+            w.resizable(False, False)
+            w.attributes("-topmost", True)
+            hdr = tk.Frame(w, bg=BG2, height=48)
+            hdr.pack(fill="x"); hdr.pack_propagate(False)
+            tk.Label(tk.Frame(hdr, bg=BG2, padx=20),
+                     text=f"{icon}  {title}", bg=BG2, fg=FG,
+                     font=(f, 12, "bold")).pack(side="left", fill="y")
+            list(hdr.winfo_children())[0].pack(fill="both", expand=True)
+            tk.Frame(w, bg=BORDER, height=1).pack(fill="x")
+            body = tk.Frame(w, bg=BG, padx=24, pady=18)
+            body.pack(fill="both", expand=True)
+            tk.Label(body, text=msg, bg=BG, fg=FG2, font=(f, 10),
+                     justify="left", anchor="w", wraplength=380).pack(anchor="w")
+            tk.Frame(w, bg=BORDER, height=1).pack(fill="x")
+            foot = tk.Frame(w, bg=BG2, height=44); foot.pack(fill="x")
+            foot.pack_propagate(False)
+            fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+            oh, _ = make_pill_btn(fi, "OK", w.destroy,
+                                  bg=BG3, fg=FG, hover_bg=BG4,
+                                  font_size=9, padx=20, pady=6, radius=7)
+            oh.pack(side="right", pady=8)
+            w.update_idletasks()
+            rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - w.winfo_reqwidth()  // 2
+            ry = self.root.winfo_y() + self.root.winfo_height() // 2 - w.winfo_reqheight() // 2
+            w.geometry(f"+{rx}+{ry}"); w.deiconify(); w.lift(); w.focus_force()
+
         if not logs_dir or not logs_dir.exists():
-            messagebox.showinfo("Logs Tidak Ditemukan",
+            _info_popup("Logs Tidak Ditemukan",
                 f"Folder logs tidak ditemukan:\n{logs_dir}\n\n"
-                "Pastikan MT pernah dijalankan minimal sekali.")
+                "Pastikan MT pernah dijalankan minimal sekali.",
+                icon="\u26a0", icon_fg=WARN)
             return
-        log_files = [f for f in logs_dir.iterdir() if f.is_file()]
+
+        log_files = [lf for lf in logs_dir.iterdir() if lf.is_file()]
         if not log_files:
-            messagebox.showinfo("Logs Kosong", "Tidak ada file log di terminal ini.")
+            _info_popup("Logs Kosong", "Tidak ada file log di terminal ini.",
+                        icon="\u2139", icon_fg=ACCENT)
             return
-        total_kb  = sum(f.stat().st_size for f in log_files) / 1024
+
+        total_kb  = sum(lf.stat().st_size for lf in log_files) / 1024
         total_str = f"{total_kb:.1f} KB" if total_kb < 1024 else f"{total_kb/1024:.2f} MB"
-        if not messagebox.askyesno("Konfirmasi Hapus Logs",
-                f"Hapus semua log?\n\nTerminal  : {t['type']} \u2014 {t['name']}\n"
-                f"Jumlah    : {len(log_files)} file\nTotal size: {total_str}\n\n"
-                "Tindakan ini tidak dapat dibatalkan."):
-            return
-        deleted, errors = 0, []
-        for f in log_files:
-            try:
-                f.unlink(); deleted += 1
-            except Exception as e:
-                errors.append(f"{f.name}: {e}")
-        t_ref = self._terminal(silent=True)
-        if t_ref:
-            self._reload_files(t_ref)
-        msg = f"{deleted} file log berhasil dihapus."
-        if errors:
-            msg += f"\n\nGagal ({len(errors)}):\n" + "\n".join(errors)
-        self._status(msg.split("\n")[0])
-        messagebox.showinfo("Selesai", msg)
+
+        # ── Popup konfirmasi custom ───────────────────────────────────────
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Hapus Logs")
+        dlg.configure(bg=BG)
+        dlg.resizable(False, False)
+        dlg.attributes("-topmost", True)
+
+        # Header
+        hdr = tk.Frame(dlg, bg=BG2, height=48)
+        hdr.pack(fill="x"); hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
+        hdr_inner.pack(fill="both", expand=True)
+        tk.Label(hdr_inner, text="\u2015  Hapus Logs",
+                 bg=BG2, fg=WARN, font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+
+        body = tk.Frame(dlg, bg=BG, padx=24, pady=18)
+        body.pack(fill="both", expand=True)
+
+        # Info box
+        info_box = tk.Frame(body, bg=BG3, padx=14, pady=10)
+        info_box.pack(fill="x", pady=(0, 14))
+        rows = [
+            ("Terminal",   f"{t['type']} — {t['name']}"),
+            ("Folder",     str(logs_dir)),
+            ("Jumlah",     f"{len(log_files)} file"),
+            ("Total size", total_str),
+        ]
+        for label, val in rows:
+            row = tk.Frame(info_box, bg=BG3)
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text=f"{label:<12}", bg=BG3, fg=FG3,
+                     font=(f, 9), anchor="w", width=12).pack(side="left")
+            tk.Label(row, text=val, bg=BG3, fg=FG2,
+                     font=(fm, 9), anchor="w").pack(side="left")
+
+        tk.Label(body,
+                 text="Semua file log akan dihapus permanen.\nTindakan ini tidak dapat dibatalkan.",
+                 bg=BG, fg=FG2, font=(f, 9), justify="left",
+                 anchor="w").pack(anchor="w", pady=(0, 4))
+
+        # Footer
+        tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(dlg, bg=BG2, height=50); foot.pack(fill="x")
+        foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=14); fi.pack(fill="both", expand=True)
+
+        def _confirm():
+            dlg.destroy()
+            deleted, errors = 0, []
+            for lf in log_files:
+                try:
+                    lf.unlink(); deleted += 1
+                except Exception as e:
+                    errors.append(f"{lf.name}: {e}")
+            t_ref = self._terminal(silent=True)
+            if t_ref:
+                self._reload_files(t_ref)
+            self._status(f"{deleted} file log dihapus dari {t['name']}.")
+
+            # ── Popup hasil ──────────────────────────────────────────────
+            res = tk.Toplevel(self.root)
+            res.title("Logs Dihapus")
+            res.configure(bg=BG)
+            res.resizable(False, False)
+            res.attributes("-topmost", True)
+            hdr2 = tk.Frame(res, bg=BG2, height=48)
+            hdr2.pack(fill="x"); hdr2.pack_propagate(False)
+            hdr2i = tk.Frame(hdr2, bg=BG2, padx=20)
+            hdr2i.pack(fill="both", expand=True)
+            ok_icon = "\u2713" if not errors else "\u26a0"
+            ok_fg   = "#5ecf3e" if not errors else WARN
+            tk.Label(hdr2i, text=f"{ok_icon}  Logs Dihapus",
+                     bg=BG2, fg=ok_fg, font=(f, 12, "bold")).pack(side="left", fill="y")
+            tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+            body2 = tk.Frame(res, bg=BG, padx=24, pady=18)
+            body2.pack(fill="both", expand=True)
+
+            icon_lbl = tk.Label(body2, text=ok_icon, bg=BG, fg=ok_fg, font=(f, 22))
+            icon_lbl.grid(row=0, column=0, rowspan=2, padx=(0, 16), sticky="n")
+            msg_text = f"{deleted} file log berhasil dihapus."
+            tk.Label(body2, text=msg_text, bg=BG, fg=FG,
+                     font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+            err_text = ("\n".join(errors[:3]) if errors
+                        else f"Dari terminal: {t['name']}")
+            tk.Label(body2, text=err_text, bg=BG, fg=FG2 if not errors else DANGER,
+                     font=(f, 9), anchor="w", wraplength=340).grid(
+                     row=1, column=1, sticky="w", pady=(4, 0))
+            body2.columnconfigure(1, weight=1)
+
+            tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+            foot2 = tk.Frame(res, bg=BG2, height=44); foot2.pack(fill="x")
+            foot2.pack_propagate(False)
+            fi2 = tk.Frame(foot2, bg=BG2, padx=12); fi2.pack(fill="both", expand=True)
+            oh, _ = make_pill_btn(fi2, "OK", res.destroy,
+                                  bg=BG3, fg=FG, hover_bg=BG4,
+                                  font_size=9, padx=20, pady=6, radius=7)
+            oh.pack(side="right", pady=8)
+            res.update_idletasks()
+            rx2 = self.root.winfo_x() + self.root.winfo_width()  // 2 - res.winfo_reqwidth()  // 2
+            ry2 = self.root.winfo_y() + self.root.winfo_height() // 2 - res.winfo_reqheight() // 2
+            res.geometry(f"+{rx2}+{ry2}"); res.deiconify(); res.lift(); res.focus_force()
+
+        confirm_h, _ = make_pill_btn(fi, "\u2015  Hapus Semua Log", _confirm,
+                                     bg="#261a05", fg=WARN, hover_bg="#3d2a08",
+                                     font_size=10, padx=20, pady=7, radius=7)
+        confirm_h.pack(side="right", pady=8, padx=(0, 6))
+        cancel_h, _ = make_pill_btn(fi, "Batal", dlg.destroy,
+                                    bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+
+        dlg.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - dlg.winfo_reqwidth()  // 2
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - dlg.winfo_reqheight() // 2
+        dlg.geometry(f"+{rx}+{ry}"); dlg.deiconify(); dlg.lift(); dlg.focus_force()
 
     # ── Browse ─────────────────────────────────────────────────────────────────
     def browse_files(self):
@@ -3550,8 +3807,6 @@ class MTManager:
         if hasattr(self, "_term_count_var"):
             self._term_count_var.set(f"{n} terminal terdeteksi")
         self._status(f"{n} terminal ditemukan.")
-        if not silent:
-            messagebox.showinfo("Scan Selesai", f"Ditemukan {n} instalasi MetaTrader.")
 
 
 if __name__ == "__main__":
