@@ -886,12 +886,13 @@ class MTManager:
         # Separator
         tk.Frame(tb, bg=BORDER2, width=1).pack(side="left", fill="y", padx=6, pady=8)
 
-        # Install MT
-        h8, c8 = make_pill_btn(tb, "\u2b07 Install MT", self.install_mt,
+        # Install / Duplikat MT dropdown
+        h8, c8 = make_pill_btn(tb, "\u2b07 Install MT  \u25be", self._install_mt_menu,
                                bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
                                font_size=10, padx=12, pady=7, radius=10)
         h8.pack(side="left", pady=8, padx=2)
-        Tooltip(c8, "Install MT4/MT5 baru dari file installer (.exe)")
+        self._install_mt_btn_holder = h8
+        Tooltip(c8, "Install MT baru atau Duplikat MT yang sudah ada")
 
 
         # ── CONTENT AREA (no scroll canvas — table fills remaining space) ──
@@ -2395,7 +2396,391 @@ class MTManager:
 
         popup.bind("<Destroy>", _cleanup)
 
-    # ── Scrollbar proxies ──────────────────────────────────────────────────────
+    # ── Install MT dropdown menu ───────────────────────────────────────────────
+    def _install_mt_menu(self):
+        """Dropdown: ⬇ Install MT  /  ⎘ Duplikat MT."""
+        f = self._font
+
+        if getattr(self, "_install_mt_popup_open", False):
+            return
+        self._install_mt_popup_open = True
+
+        popup = tk.Toplevel(self.root)
+        popup.wm_overrideredirect(True)
+        popup.attributes("-topmost", True)
+
+        outer = tk.Frame(popup, bg=BORDER2, padx=1, pady=1)
+        outer.pack()
+        inner = tk.Frame(outer, bg=BG3)
+        inner.pack()
+
+        items = [
+            ("\u2b07  Install MT",  self.install_mt),
+            ("\u2398  Duplikat MT", self.duplicate_mt),
+        ]
+
+        _closed = [False]
+
+        def _close_popup():
+            if _closed[0]:
+                return
+            _closed[0] = True
+            self._install_mt_popup_open = False
+            try:
+                popup.destroy()
+            except Exception:
+                pass
+
+        def _make_item(text, cmd):
+            row = tk.Frame(inner, bg=BG3, cursor="hand2")
+            row.pack(fill="x")
+            lbl = tk.Label(row, text=text, bg=BG3, fg=FG,
+                           font=(f, 10), anchor="w", padx=16, pady=8)
+            lbl.pack(fill="x")
+
+            def _enter(_): row.config(bg=BG4); lbl.config(bg=BG4, fg=ACCENT)
+            def _leave(_): row.config(bg=BG3); lbl.config(bg=BG3, fg=FG)
+            def _click(_):
+                _close_popup()
+                self.root.update()
+                self.root.after(50, cmd)
+
+            for w in (row, lbl):
+                w.bind("<Enter>",    _enter)
+                w.bind("<Leave>",    _leave)
+                w.bind("<Button-1>", _click)
+
+        for text, cmd in items:
+            _make_item(text, cmd)
+
+        popup.update_idletasks()
+        btn = self._install_mt_btn_holder
+        bx  = btn.winfo_rootx()
+        by  = btn.winfo_rooty()
+        bh  = btn.winfo_height()
+        popup.wm_geometry(f"+{bx}+{by + bh + 2}")
+
+        def _on_press_outside(event):
+            if _closed[0]:
+                return
+            try:
+                wx = popup.winfo_rootx(); wy = popup.winfo_rooty()
+                ww = popup.winfo_width(); wh = popup.winfo_height()
+                if not (wx <= event.x_root <= wx + ww
+                        and wy <= event.y_root <= wy + wh):
+                    _close_popup()
+            except Exception:
+                _close_popup()
+
+        self.root.bind_all("<ButtonPress-1>", _on_press_outside, add=True)
+
+        def _poll():
+            if _closed[0]:
+                return
+            try:
+                mx = self.root.winfo_pointerx()
+                my = self.root.winfo_pointery()
+                wx = popup.winfo_rootx(); wy = popup.winfo_rooty()
+                ww = popup.winfo_width(); wh = popup.winfo_height()
+                margin = 80
+                if not (wx - margin <= mx <= wx + ww + margin
+                        and wy - margin <= my <= wy + wh + margin):
+                    _close_popup()
+                    return
+                popup.after(150, _poll)
+            except Exception:
+                _close_popup()
+
+        popup.after(300, _poll)
+
+        def _cleanup(_=None):
+            try:
+                self.root.unbind_all("<ButtonPress-1>")
+            except Exception:
+                pass
+            self._install_mt_popup_open = False
+
+        popup.bind("<Destroy>", _cleanup)
+
+    # ── Duplikat MT ────────────────────────────────────────────────────────────
+    def duplicate_mt(self):
+        """Duplikat folder instalasi MT yang dipilih di tabel, dimulai dari nomor 2."""
+        t = self._terminal(silent=False)
+        if not t:
+            return
+
+        f  = self._font
+        fm = self._font_mono
+
+        mt_type = t.get("type", "MT4")
+
+        # Folder sumber & base path tujuan sesuai tipe MT
+        if mt_type == "MT4":
+            src_root_str = t.get("install_path", "")
+            linux_base   = Path.home() / ".wine/drive_c/Program Files (x86)"
+        else:
+            src_root_str = t.get("path", "")
+            linux_base   = Path.home() / ".wine/drive_c/Program Files"
+
+        src_folder: Path | None = None
+        if src_root_str:
+            candidate = Path(src_root_str)
+            if candidate.exists():
+                src_folder = candidate
+
+        if src_folder is None:
+            terminal_path = Path(t.get("path", ""))
+            for candidate in [terminal_path, terminal_path.parent]:
+                if candidate.exists() and candidate.is_dir():
+                    src_folder = candidate
+                    break
+
+        if src_folder is None or not src_folder.exists():
+            messagebox.showerror("Folder tidak ditemukan",
+                f"Folder instalasi MT tidak dapat ditemukan untuk terminal:\n{t['name']}")
+            return
+
+        base_name = src_folder.name
+
+        # ── Popup ──────────────────────────────────────────────────────────────
+        win = tk.Toplevel(self.root)
+        win.title("Duplikat MT")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 270
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 170
+        win.geometry(f"540x340+{rx}+{ry}")
+        win.deiconify()
+
+        # Header
+        hdr = tk.Frame(win, bg=BG2, height=48)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
+        hdr_inner.pack(fill="both", expand=True)
+        tk.Label(hdr_inner, text="\u2398  Duplikat MetaTrader",
+                 bg=BG2, fg=FG, font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+
+        body = tk.Frame(win, bg=BG, padx=24, pady=18)
+        body.pack(fill="both", expand=True)
+
+        # Info sumber
+        tk.Label(body, text="SUMBER",
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
+        src_border = tk.Frame(body, bg=BORDER2, padx=1, pady=1)
+        src_border.pack(fill="x", pady=(4, 14))
+        tk.Label(src_border,
+                 text=f"  {t['name']}  [{mt_type}]  \u2192  {src_folder}",
+                 bg=BG3, fg=FG2, font=(fm, 9), anchor="w").pack(
+                 fill="x", ipady=7, padx=1)
+
+        # Jumlah duplikat
+        tk.Label(body, text="JUMLAH DUPLIKAT  (maks. 19)",
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
+
+        qty_row = tk.Frame(body, bg=BG)
+        qty_row.pack(fill="x", pady=(4, 6))
+
+        qty_var = tk.IntVar(value=1)
+
+        def _set_qty(v):
+            try:
+                qty_var.set(max(1, min(19, int(v))))
+            except (ValueError, tk.TclError):
+                pass
+
+        def _dec(): _set_qty(qty_var.get() - 1)
+        def _inc(): _set_qty(qty_var.get() + 1)
+
+        dec_h, _ = make_pill_btn(qty_row, "\u2212", _dec,
+                                 bg=BG3, fg=FG, hover_bg=BG4,
+                                 font_size=12, padx=10, pady=6, radius=7)
+        dec_h.pack(side="left", padx=(0, 6))
+
+        qty_border = tk.Frame(qty_row, bg=BORDER2, padx=1, pady=1)
+        qty_border.pack(side="left", padx=(0, 6))
+        qty_entry = tk.Entry(
+            qty_border, textvariable=qty_var,
+            bg=BG3, fg=FG, insertbackground=ACCENT,
+            relief="flat", font=(f, 11, "bold"),
+            width=4, justify="center", highlightthickness=0,
+        )
+        qty_entry.pack(ipady=6, padx=1)
+        qty_entry.bind("<FocusOut>", lambda _: _set_qty(qty_var.get()))
+
+        inc_h, _ = make_pill_btn(qty_row, "+", _inc,
+                                 bg=BG3, fg=FG, hover_bg=BG4,
+                                 font_size=12, padx=10, pady=6, radius=7)
+        inc_h.pack(side="left")
+
+        # Preview nama folder
+        hint_var = tk.StringVar(value="")
+        tk.Label(body, textvariable=hint_var,
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w",
+                 wraplength=480).pack(fill="x", pady=(4, 8))
+
+        def _update_hint(*_):
+            q = qty_var.get()
+            names = [f"{base_name} {n}" for n in range(2, 2 + q)]
+            preview = ", ".join(names[:3])
+            if q > 3:
+                preview += ", \u2026"
+            hint_var.set(f"\u2192 folder: {preview}")
+
+        qty_var.trace_add("write", _update_hint)
+        _update_hint()
+
+        # Status
+        status_var = tk.StringVar(value="")
+        status_lbl = tk.Label(body, textvariable=status_var,
+                              bg=BG, fg=FG3, font=(f, 9), anchor="w")
+        status_lbl.pack(fill="x")
+
+        # Footer
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=50)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=14)
+        fi.pack(fill="both", expand=True)
+
+        def _run_duplicate():
+            qty = qty_var.get()
+            win.destroy()
+            self._run_mt_duplicate(src_folder, base_name, linux_base, qty, mt_type)
+
+        run_h, _ = make_pill_btn(fi, "\u2398  Mulai Duplikat", _run_duplicate,
+                                 bg="#1a1400", fg=WARN, hover_bg="#2a2000",
+                                 font_size=10, padx=20, pady=7, radius=7)
+        run_h.pack(side="right", pady=8, padx=(0, 6))
+
+        cancel_h, _ = make_pill_btn(fi, "Batal", win.destroy,
+                                    bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+
+    # ── _run_mt_duplicate ──────────────────────────────────────────────────────
+    def _run_mt_duplicate(self, src_folder: Path, base_name: str,
+                          linux_base: Path, qty: int, mt_type: str):
+        """Copy src_folder ke linux_base/<base_name> 2, 3, … qty+1 di background thread."""
+        f = self._font
+
+        win = tk.Toplevel(self.root)
+        win.title("Menduplikat MT")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 240
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 120
+        win.geometry(f"480x240+{rx}+{ry}")
+        win.deiconify()
+
+        body = tk.Frame(win, bg=BG, padx=28, pady=20)
+        body.pack(fill="both", expand=True)
+
+        icon_lbl = tk.Label(body, text="\u2398", bg=BG, fg=WARN, font=(f, 22))
+        icon_lbl.grid(row=0, column=0, rowspan=3, padx=(0, 16), sticky="n")
+
+        title_lbl = tk.Label(body, text="Memulai duplikat\u2026",
+                             bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w")
+        title_lbl.grid(row=0, column=1, sticky="w")
+
+        dir_var = tk.StringVar(value="")
+        dir_lbl = tk.Label(body, textvariable=dir_var,
+                           bg=BG, fg=FG3, font=(f, 8), anchor="w")
+        dir_lbl.grid(row=1, column=1, sticky="w", pady=(2, 6))
+
+        prog_frame = tk.Frame(body, bg=BG)
+        prog_frame.grid(row=2, column=1, sticky="ew")
+        body.columnconfigure(1, weight=1)
+
+        progress = ProgressBar(prog_frame, height=3, bg=BG4, fill=WARN)
+        progress.pack(fill="x")
+
+        count_var = tk.StringVar(value=f"0 / {qty}")
+        tk.Label(prog_frame, textvariable=count_var,
+                 bg=BG, fg=FG3, font=(f, 8)).pack(anchor="e", pady=(3, 0))
+
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=44)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12)
+        fi.pack(fill="both", expand=True)
+
+        close_h, _ = make_pill_btn(fi, "Tutup", win.destroy,
+                                   bg=BG3, fg=FG, hover_bg=BG4,
+                                   font_size=9, padx=20, pady=6, radius=7)
+
+        _cancelled = [False]
+
+        def _do_cancel():
+            _cancelled[0] = True
+            icon_lbl.config(text="\u23f9", fg=WARN)
+            title_lbl.config(text="Duplikat dibatalkan.", fg=WARN)
+            dir_var.set("")
+            cancel_h.pack_forget()
+            close_h.pack(side="right", pady=8)
+
+        cancel_h, _ = make_pill_btn(fi, "\u2715  Cancel", _do_cancel,
+                                    bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8, padx=(0, 6))
+
+        def _do():
+            errors   = []
+            done_cnt = [0]
+
+            for i in range(qty):
+                if _cancelled[0]:
+                    break
+                num      = i + 2          # mulai dari 2
+                dst_name = f"{base_name} {num}"
+                dst_path = linux_base / dst_name
+
+                def _upd(dn=dst_name, idx=i):
+                    title_lbl.config(text=f"Menduplikat {idx + 1} dari {qty}\u2026")
+                    count_var.set(f"{idx} / {qty}")
+                    progress.set(idx / qty if qty > 1 else 0.05)
+                    dir_var.set(f"\u2192 {dn}")
+                win.after(0, _upd)
+
+                try:
+                    if dst_path.exists():
+                        errors.append(f"[{num}] Folder sudah ada: {dst_name}")
+                        continue
+                    shutil.copytree(str(src_folder), str(dst_path))
+                    done_cnt[0] += 1
+                except Exception as e:
+                    errors.append(f"[{num}] {e}")
+
+            def _done():
+                if _cancelled[0]:
+                    return
+                progress.set(1.0)
+                count_var.set(f"{done_cnt[0]} / {qty}")
+                dir_var.set("")
+                if errors:
+                    icon_lbl.config(text="\u26a0", fg=WARN)
+                    title_lbl.config(text=f"Selesai dengan {len(errors)} error.", fg=WARN)
+                    dir_lbl.config(text="\n".join(errors[:3]), fg=DANGER)
+                else:
+                    icon_lbl.config(text="\u2713", fg=WARN)
+                    title_lbl.config(
+                        text=f"{done_cnt[0]} duplikat berhasil dibuat.", fg=FG)
+                    dir_lbl.config(
+                        text="Tekan Scan untuk melihat terminal baru.", fg=FG2)
+                cancel_h.pack_forget()
+                close_h.pack(side="right", pady=8)
+                self._status(
+                    f"Duplikat MT selesai: {done_cnt[0]}/{qty} dari {src_folder.name}")
+
+            win.after(0, _done)
+
+        threading.Thread(target=_do, daemon=True).start()
     def _term_yview(self, *args):
         self.term_tree.yview(*args)
         self._draw_as_canvas()
