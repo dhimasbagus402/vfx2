@@ -969,6 +969,14 @@ class MTManager:
                                font_size=10, padx=12, pady=7, radius=10)
         h5.pack(side="left", pady=8, padx=2)
         Tooltip(c5, "Jalankan Uninstall.exe pada folder instalasi MT")
+        
+        # Install / Duplikat MT dropdown
+        h8, c8 = make_pill_btn(tb, "\u2b07 Install MT  \u25be", self._install_mt_menu,
+                               bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
+                               font_size=10, padx=12, pady=7, radius=10)
+        h8.pack(side="left", pady=8, padx=2)
+        self._install_mt_btn_holder = h8
+        Tooltip(c8, "Install MT baru atau Duplikat MT yang sudah ada")
 
         # Separator
         tk.Frame(tb, bg=BORDER2, width=1).pack(side="left", fill="y", padx=6, pady=8)
@@ -986,17 +994,6 @@ class MTManager:
                                font_size=10, padx=12, pady=7, radius=10)
         h7.pack(side="left", pady=8, padx=2)
         Tooltip(c7, "Buka MetaEditor untuk MT yang dipilih")
-
-        # Separator
-        tk.Frame(tb, bg=BORDER2, width=1).pack(side="left", fill="y", padx=6, pady=8)
-
-        # Install / Duplikat MT dropdown
-        h8, c8 = make_pill_btn(tb, "\u2b07 Install MT  \u25be", self._install_mt_menu,
-                               bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
-                               font_size=10, padx=12, pady=7, radius=10)
-        h8.pack(side="left", pady=8, padx=2)
-        self._install_mt_btn_holder = h8
-        Tooltip(c8, "Install MT baru atau Duplikat MT yang sudah ada")
 
 
         # ── CONTENT AREA (no scroll canvas — table fills remaining space) ──
@@ -4094,5 +4091,12 @@ class MTManager:
 
 if __name__ == "__main__":
     root = tk.Tk()
+    try:
+        _icon_path = Path(__file__).parent / "mt_manager.png"
+        _icon = tk.PhotoImage(file=str(_icon_path))
+        root.iconphoto(True, _icon)
+    except Exception:
+        pass
     app = MTManager(root)
     root.mainloop()
+
