@@ -2752,13 +2752,19 @@ class MTManager:
                 win.after(0, _upd)
 
                 try:
-                    if dst_path.exists():
-                        errors.append(f"[{num}] Folder sudah ada: {dst_name}")
-                        launched.append(dst_path)   # tetap coba launch nanti
-                        continue
-                    shutil.copytree(str(src_folder), str(dst_path))
+                    # Cari nama yang belum ada — tambah suffix jika konflik
+                    final_path = dst_path
+                    if final_path.exists():
+                        suffix = 2
+                        while True:
+                            candidate = linux_base / f"{dst_name} {suffix}"
+                            if not candidate.exists():
+                                final_path = candidate
+                                break
+                            suffix += 1
+                    shutil.copytree(str(src_folder), str(final_path))
                     done_cnt[0] += 1
-                    launched.append(dst_path)
+                    launched.append(final_path)
                 except Exception as e:
                     errors.append(f"[{num}] Copy gagal: {e}")
 
