@@ -435,11 +435,107 @@ class Tooltip:
         tw.wm_geometry(f"+{x}+{y}")
 
 
+# ── Themed message popup (menggantikan messagebox default tkinter) ────────────
+def _themed_popup(root_or_widget, kind: str, title: str, msg: str,
+                  btn_text: str = "OK", extra_btn=None):
+    """
+    Tampilkan popup bertema dark sesuai desain aplikasi.
+
+    kind  : "error"   → ikon ✕ merah (DANGER)
+            "warning" → ikon ⚠ kuning (WARN)
+            "info"    → ikon ℹ biru   (ACCENT)
+            "success" → ikon ✓ hijau
+    extra_btn : None | ("Label", callback) — tombol kedua di kiri OK
+    """
+    ICON_MAP = {
+        "error":   ("\u2715", DANGER),
+        "warning": ("\u26a0", WARN),
+        "info":    ("\u2139", ACCENT),
+        "success": ("\u2713", "#5ecf3e"),
+    }
+    icon_char, icon_color = ICON_MAP.get(kind, ("\u2139", ACCENT))
+
+    # Cari root Tk
+    try:
+        root = root_or_widget.winfo_toplevel()
+    except Exception:
+        root = root_or_widget
+
+    _f  = resolve_font(FONT)
+    _fm = resolve_font(FONT_MONO)
+
+    win = tk.Toplevel(root)
+    win.title(title)
+    win.configure(bg=BG)
+    win.resizable(False, False)
+    win.attributes("-topmost", True)
+
+    # Header
+    hdr = tk.Frame(win, bg=BG2, height=48)
+    hdr.pack(fill="x")
+    hdr.pack_propagate(False)
+    hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
+    hdr_inner.pack(fill="both", expand=True)
+    tk.Label(hdr_inner, text=f"{icon_char}  {title}",
+             bg=BG2, fg=icon_color, font=(_f, 12, "bold")).pack(side="left", fill="y")
+    tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+
+    # Body
+    body = tk.Frame(win, bg=BG, padx=24, pady=18)
+    body.pack(fill="both", expand=True)
+    big_icon = tk.Label(body, text=icon_char, bg=BG, fg=icon_color, font=(_f, 22))
+    big_icon.grid(row=0, column=0, padx=(0, 16), sticky="n", pady=(2, 0))
+    tk.Label(body, text=msg, bg=BG, fg=FG2,
+             font=(_f, 10), justify="left", anchor="w",
+             wraplength=380).grid(row=0, column=1, sticky="w")
+    body.columnconfigure(1, weight=1)
+
+    # Footer
+    tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+    foot = tk.Frame(win, bg=BG2, height=44)
+    foot.pack(fill="x")
+    foot.pack_propagate(False)
+    fi = tk.Frame(foot, bg=BG2, padx=12)
+    fi.pack(fill="both", expand=True)
+
+    oh, _ = make_pill_btn(fi, btn_text, win.destroy,
+                          bg=BG3, fg=FG, hover_bg=BG4,
+                          font_size=9, padx=20, pady=6, radius=7)
+    oh.pack(side="right", pady=8)
+
+    if extra_btn:
+        elabel, ecmd = extra_btn
+        def _extra():
+            win.destroy()
+            ecmd()
+        eh, _ = make_pill_btn(fi, elabel, _extra,
+                              bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
+                              font_size=9, padx=20, pady=6, radius=7)
+        eh.pack(side="right", pady=8, padx=(0, 6))
+
+    win.update_idletasks()
+    try:
+        rx = root.winfo_x() + root.winfo_width()  // 2 - win.winfo_reqwidth()  // 2
+        ry = root.winfo_y() + root.winfo_height() // 2 - win.winfo_reqheight() // 2
+        win.geometry(f"+{rx}+{ry}")
+    except Exception:
+        pass
+    win.deiconify()
+    win.lift()
+    win.focus_force()
+    return win
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
-def yad_pick_file(title="Pilih File", filetypes=None, start_dir=None):
+def yad_pick_file(title="Pilih File", filetypes=None, start_dir=None,
+                  root_widget=None):
     if not shutil.which("yad"):
-        messagebox.showerror("yad tidak ditemukan",
-            "yad belum terinstall.\n\nJalankan:\n  sudo apt install yad")
+        if root_widget:
+            _themed_popup(root_widget, "error", "yad tidak ditemukan",
+                "yad belum terinstall.\n\nJalankan:\n  sudo apt install yad")
+        else:
+            messagebox.showerror("yad tidak ditemukan",
+                "yad belum terinstall.\n\nJalankan:\n  sudo apt install yad")
         return None
     start = str(start_dir) + "/" if start_dir else str(ALLOWED_ROOT) + "/"
     cmd = ["yad", "--file-selection", "--title", title,
@@ -458,12 +554,20 @@ def yad_pick_file(title="Pilih File", filetypes=None, start_dir=None):
         try:
             selected.resolve().relative_to(ALLOWED_ROOT.resolve())
         except ValueError:
-            messagebox.showerror("Akses Ditolak",
-                f"File harus berada di dalam:\n{ALLOWED_ROOT}\n\nFile dipilih:\n{selected}")
+            if root_widget:
+                _themed_popup(root_widget, "error", "Akses Ditolak",
+                    f"File harus berada di dalam:\n{ALLOWED_ROOT}\n\n"
+                    f"File dipilih:\n{selected}")
+            else:
+                messagebox.showerror("Akses Ditolak",
+                    f"File harus berada di dalam:\n{ALLOWED_ROOT}\n\nFile dipilih:\n{selected}")
             return None
         return str(selected) if selected.is_file() else None
     except Exception as e:
-        messagebox.showerror("Error", f"yad gagal:\n{e}")
+        if root_widget:
+            _themed_popup(root_widget, "error", "Error", f"yad gagal:\n{e}")
+        else:
+            messagebox.showerror("Error", f"yad gagal:\n{e}")
         return None
 
 
@@ -1244,7 +1348,7 @@ class MTManager:
         def _run_update(_=None):
             update_sh = Path.home() / "vfx2" / "update.sh"
             if not update_sh.exists():
-                messagebox.showerror("Update Gagal",
+                _themed_popup(self.root, "error", "Update Gagal",
                     f"Script tidak ditemukan:\n{update_sh}")
                 return
             self._status("Menjalankan update...")
@@ -1517,13 +1621,13 @@ class MTManager:
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.root.after(0, lambda: self._status(f"{label} sedang dibuka."))
             except FileNotFoundError:
-                self.root.after(0, lambda: messagebox.showerror(
+                self.root.after(0, lambda: _themed_popup(self.root, "error",
                     "Wine tidak ditemukan",
                     "Perintah 'wine' tidak tersedia.\n"
                     "Install wine terlebih dahulu:\n  sudo apt install wine"))
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror(
-                    "Gagal", f"Tidak dapat membuka {label}:\n{e}"))
+                self.root.after(0, lambda err=e: _themed_popup(self.root, "error",
+                    "Gagal", f"Tidak dapat membuka {label}:\n{err}"))
         threading.Thread(target=_do, daemon=True).start()
 
     # ── Uninstall MT (jalankan Uninstall.exe) ─────────────────────────────────
@@ -1549,7 +1653,7 @@ class MTManager:
                     uninstall_exe = candidate
             if uninstall_exe is None:
                 ip_str = str(install_path) if install_path else "(gagal parse origin.txt)"
-                messagebox.showerror(
+                _themed_popup(self.root, "error",
                     "Uninstall.exe tidak ditemukan",
                     f"File Uninstall.exe tidak dapat ditemukan untuk terminal:\n"
                     f"{t['name']} (MT4)\n\n"
@@ -1565,7 +1669,7 @@ class MTManager:
                 uninstall_exe = candidate
 
         if uninstall_exe is None:
-            messagebox.showerror(
+            _themed_popup(self.root, "error",
                 "Uninstall.exe tidak ditemukan",
                 f"File Uninstall.exe tidak dapat ditemukan untuk terminal:\n"
                 f"{t['name']} ({t['type']})\n\n"
@@ -1626,9 +1730,7 @@ class MTManager:
 
         def _run_uninstall():
             win.destroy()
-            self._wine_launch(uninstall_exe, f"Uninstall {t['name']}({t['type']})")
-            # Scan ulang setelah uninstall selesai (delay 3s beri waktu wine tutup)
-            self.root.after(3000, self.scan_terminals)
+            self._run_uninstall_with_progress(uninstall_exe, t)
 
         run_h, _ = make_pill_btn(fi, "⚠  Lanjutkan Uninstall", _run_uninstall,
                                  bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
@@ -1648,6 +1750,183 @@ class MTManager:
         win.lift()
         win.focus_force()
 
+    # ── Progress window untuk Uninstall MT ───────────────────────────────────
+    def _run_uninstall_with_progress(self, uninstall_exe: Path, t: dict):
+        """
+        Jalankan uninstall.exe via Wine dengan progress window.
+        - Indeterminate progress bar berputar selama proses berjalan
+        - Polling setiap 500ms untuk cek apakah proses sudah selesai
+        - Setelah selesai: jalankan Scan MT otomatis
+        - Hapus xdotool jika terinstall (tidak dipakai saat uninstall)
+        """
+        import time
+
+        f = self._font
+
+        # ── Progress window ──────────────────────────────────────────────
+        pwin = tk.Toplevel(self.root)
+        pwin.title("Uninstall MT — Sedang Berjalan")
+        pwin.configure(bg=BG)
+        pwin.resizable(False, False)
+        pwin.attributes("-topmost", True)
+        pwin.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 240
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 130
+        pwin.geometry(f"480x260+{rx}+{ry}")
+        pwin.deiconify()
+
+        # Header
+        hdr = tk.Frame(pwin, bg=BG2, height=48)
+        hdr.pack(fill="x"); hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
+        hdr_inner.pack(fill="both", expand=True)
+        tk.Label(hdr_inner, text="\u26d4  Uninstall MT",
+                 bg=BG2, fg="#e07b00", font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(pwin, bg=BORDER, height=1).pack(fill="x")
+
+        # Body
+        body = tk.Frame(pwin, bg=BG, padx=28, pady=20)
+        body.pack(fill="both", expand=True)
+
+        icon_lbl = tk.Label(body, text="\u23f3", bg=BG, fg="#e07b00", font=(f, 22))
+        icon_lbl.grid(row=0, column=0, rowspan=3, padx=(0, 16), sticky="n")
+
+        title_lbl = tk.Label(body,
+            text=f"Menjalankan uninstall {t['name']}…",
+            bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w")
+        title_lbl.grid(row=0, column=1, sticky="w")
+
+        sub_lbl = tk.Label(body,
+            text=f"{t['type']}  ·  harap tunggu, jangan tutup window ini",
+            bg=BG, fg=FG2, font=(f, 9), anchor="w")
+        sub_lbl.grid(row=1, column=1, sticky="w", pady=(3, 8))
+
+        # Progress bar (indeterminate menggunakan animasi manual)
+        prog_frame = tk.Frame(body, bg=BG)
+        prog_frame.grid(row=2, column=1, sticky="ew")
+        body.columnconfigure(1, weight=1)
+
+        progress = ProgressBar(prog_frame, height=6, bg=BG4, fill="#e07b00")
+        progress.pack(fill="x")
+
+        pct_var = tk.StringVar(value="")
+        pct_lbl = tk.Label(prog_frame, textvariable=pct_var,
+                           bg=BG, fg=FG3, font=(f, 8))
+        pct_lbl.pack(anchor="e", pady=(3, 0))
+
+        # Footer
+        tk.Frame(pwin, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(pwin, bg=BG2, height=44); foot.pack(fill="x")
+        foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+
+        close_h, _ = make_pill_btn(fi, "Tutup", pwin.destroy,
+                                   bg=BG3, fg=FG, hover_bg=BG4,
+                                   font_size=9, padx=20, pady=6, radius=7)
+        # Tombol tutup hanya muncul setelah selesai
+
+        _state = {"proc": None, "done": False, "anim_pct": 0.0, "anim_dir": 1}
+
+        # ── Animasi indeterminate progress bar ──────────────────────────
+        def _animate():
+            if _state["done"]:
+                return
+            p = _state["anim_pct"]
+            d = _state["anim_dir"]
+            p += d * 0.03
+            if p >= 1.0:
+                p = 1.0; _state["anim_dir"] = -1
+            elif p <= 0.0:
+                p = 0.0; _state["anim_dir"] = 1
+            _state["anim_pct"] = p
+            progress.set(p)
+            pwin.after(60, _animate)
+
+        # ── Polling: cek apakah proses wine sudah selesai ────────────────
+        def _poll():
+            proc = _state["proc"]
+            if proc is None:
+                pwin.after(300, _poll)
+                return
+            if proc.poll() is None:
+                # Masih berjalan
+                pwin.after(500, _poll)
+                return
+            # Proses selesai
+            _state["done"] = True
+            _on_uninstall_done(proc.returncode)
+
+        def _on_uninstall_done(returncode: int):
+            progress.set(1.0)
+            pct_var.set("")
+
+            # ── Hapus xdotool jika terinstall ────────────────────────────
+            xdotool_removed = False
+            try:
+                if shutil.which("xdotool"):
+                    result = subprocess.run(
+                        ["sudo", "apt-get", "remove", "-y", "xdotool"],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    xdotool_removed = (result.returncode == 0)
+            except Exception:
+                pass
+
+            if returncode == 0:
+                icon_lbl.config(text="\u2713", fg="#5ecf3e")
+                title_lbl.config(text="Uninstall selesai!", fg="#5ecf3e")
+                extra = "\nxdotool berhasil dihapus." if xdotool_removed else ""
+                sub_lbl.config(
+                    text=f"Proses uninstall {t['name']} selesai.{extra}\n"
+                          "Scan MT dijalankan otomatis…",
+                    fg=FG2)
+            else:
+                icon_lbl.config(text="\u26a0", fg=WARN)
+                title_lbl.config(
+                    text=f"Uninstall selesai (kode: {returncode})", fg=WARN)
+                sub_lbl.config(
+                    text="Proses wine sudah berhenti. Cek apakah uninstall berhasil.",
+                    fg=FG2)
+
+            close_h.pack(side="right", pady=8)
+            self._status(
+                f"Uninstall {t['name']} selesai (rc={returncode}).")
+            # Scan MT otomatis setelah uninstall selesai
+            self.root.after(800, self.scan_terminals)
+
+        # ── Jalankan wine di thread background ──────────────────────────
+        def _do():
+            try:
+                proc = subprocess.Popen(
+                    ["wine", str(uninstall_exe)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                _state["proc"] = proc
+            except FileNotFoundError:
+                pwin.after(0, lambda: (
+                    icon_lbl.config(text="\u2715", fg=DANGER),
+                    title_lbl.config(text="Wine tidak ditemukan", fg=DANGER),
+                    sub_lbl.config(
+                        text="Perintah 'wine' tidak tersedia.\n"
+                             "Install wine: sudo apt install wine",
+                        fg=DANGER),
+                    close_h.pack(side="right", pady=8),
+                ))
+                _state["done"] = True
+            except Exception as e:
+                pwin.after(0, lambda err=e: (
+                    icon_lbl.config(text="\u2715", fg=DANGER),
+                    title_lbl.config(text="Gagal menjalankan uninstall", fg=DANGER),
+                    sub_lbl.config(text=str(err), fg=DANGER),
+                    close_h.pack(side="right", pady=8),
+                ))
+                _state["done"] = True
+
+        threading.Thread(target=_do, daemon=True).start()
+        pwin.after(100, _poll)
+        _animate()
+
     # ── Open MT (jalankan terminal.exe / terminal64.exe) ──────────────────────
     def open_mt(self):
         t = self._terminal()
@@ -1656,7 +1935,7 @@ class MTManager:
         exe = self._find_exe(t, "terminal.exe", "terminal64.exe")
         if exe is None:
             name = "terminal64.exe" if t["type"] == "MT5" else "terminal.exe"
-            messagebox.showerror(f"{name} tidak ditemukan",
+            _themed_popup(self.root, "error", f"{name} tidak ditemukan",
                 f"File {name} tidak ditemukan untuk {t['name']} ({t['type']})\n"
                 f"Folder: {t['path']}")
             return
@@ -1670,7 +1949,7 @@ class MTManager:
         exe = self._find_exe(t, "metaeditor.exe", "MetaEditor64.exe")
         if exe is None:
             name = "MetaEditor64.exe" if t["type"] == "MT5" else "metaeditor.exe"
-            messagebox.showerror(f"{name} tidak ditemukan",
+            _themed_popup(self.root, "error", f"{name} tidak ditemukan",
                 f"File {name} tidak ditemukan untuk {t['name']} ({t['type']})\n"
                 f"Folder: {t['path']}")
             return
@@ -1736,6 +2015,7 @@ class MTManager:
                     title="Pilih File Installer MT",
                     filetypes=["*.exe"],
                     start_dir=DOCS_DIR,
+                    root_widget=self.root,
                 )
                 def _back():
                     if result:
@@ -2539,7 +2819,7 @@ class MTManager:
                     break
 
         if src_folder is None or not src_folder.exists():
-            messagebox.showerror("Folder tidak ditemukan",
+            _themed_popup(self.root, "error", "Folder tidak ditemukan",
                 f"Folder instalasi MT tidak dapat ditemukan untuk terminal:\n{t['name']}")
             return
 
@@ -2942,13 +3222,15 @@ class MTManager:
         sel = self.term_tree.selection()
         if not sel:
             if not silent:
-                messagebox.showwarning("Perhatian", "Pilih terminal terlebih dahulu.")
+                _themed_popup(self.root, "warning", "Perhatian",
+                              "Pilih terminal terlebih dahulu.")
             return None
         iid = sel[0]
         item = self.term_tree.item(iid)
         if "group" in item.get("tags", ()):
             if not silent:
-                messagebox.showwarning("Perhatian", "Pilih terminal, bukan grup.")
+                _themed_popup(self.root, "warning", "Perhatian",
+                              "Pilih terminal, bukan grup.")
             return None
         t = getattr(self, "_iid_to_terminal", {}).get(iid)
         if t is None:
@@ -3044,7 +3326,8 @@ class MTManager:
         DOCS_DIR.mkdir(exist_ok=True)
         fp = yad_pick_file(title=f"Pilih file {label}",
                            filetypes=["*.ex4","*.ex5","*.mq4","*.mq5"],
-                           start_dir=DOCS_DIR)
+                           start_dir=DOCS_DIR,
+                           root_widget=self.root)
         if not fp:
             return
         dst = t[key]
@@ -3424,14 +3707,14 @@ class MTManager:
             elif shutil.which("xdg-open"):
                 subprocess.Popen(["xdg-open", str(target)])
             else:
-                messagebox.showinfo("Path Terminal", str(target))
+                _themed_popup(self.root, "info", "Path Terminal", str(target))
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            _themed_popup(self.root, "error", "Error", str(e))
 
     # ── wget Download ──────────────────────────────────────────────────────────
     def wget_download(self):
         if not shutil.which("wget"):
-            messagebox.showerror("wget tidak ditemukan",
+            _themed_popup(self.root, "error", "wget tidak ditemukan",
                 "wget belum terinstall.\n\nJalankan:\n  sudo apt install wget")
             return
         PLACEHOLDER = self._wget_placeholder
@@ -3479,17 +3762,17 @@ class MTManager:
                         if ok:
                             self.wget_status_var.set("Selesai + diekstrak \u2192 Documents/")
                             self._status(f"wget + ekstrak selesai: {downloaded.name}")
-                            messagebox.showinfo("Selesai",
+                            _themed_popup(self.root, "success", "Selesai",
                                 f"File diunduh dan diekstrak ke:\n{DOCS_DIR}\n\nFile: {downloaded.name}")
                         else:
                             self.wget_status_var.set("Unduh OK, ekstrak gagal.")
-                            messagebox.showwarning("Ekstrak Gagal",
+                            _themed_popup(self.root, "warning", "Ekstrak Gagal",
                                 f"File berhasil diunduh ke {DOCS_DIR}\n\nTapi ekstrak gagal:\n{msg}")
                     else:
                         fname = downloaded.name if downloaded else ""
                         self.wget_status_var.set(f"Selesai \u2192 Documents/{fname}")
                         self._status(f"wget selesai \u2192 {DOCS_DIR}")
-                        messagebox.showinfo("Download Selesai",
+                        _themed_popup(self.root, "success", "Download Selesai",
                             f"File berhasil diunduh ke:\n{DOCS_DIR}")
 
                 self.root.after(0, _finish)
@@ -3515,7 +3798,7 @@ class MTManager:
             AUTOSTART_DIR.mkdir(parents=True, exist_ok=True)
             exe = self._find_exe(t, "terminal.exe", "terminal64.exe")
             if exe is None:
-                messagebox.showerror("Autostart Gagal",
+                _themed_popup(self.root, "error", "Autostart Gagal",
                     f"File terminal.exe / terminal64.exe tidak ditemukan\n"
                     f"untuk {t['name']} ({t['type']}).\n\nAutostart tidak dapat dibuat.")
                 return False
