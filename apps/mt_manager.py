@@ -8,7 +8,7 @@ from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk, messagebox
-__version__ = "1.2"
+__version__ = "1.3"
 
 # ── Config file (persist settings antar sesi) ─────────────────────────────────
 CONFIG_PATH = Path.home() / ".config" / "mt_manager" / "settings.json"
@@ -2630,7 +2630,7 @@ class MTManager:
                 else:
                     icon_lbl.config(text="\u2713", fg=WARN)
                     title_lbl.config(
-                        text=f"{done_cnt[0]} duplikat dibuat & dijalankan.", fg=FG)
+                        text=f"{done_cnt[0]} duplikat dibuat & dijalankan. \n Silakan Scan Metatrader", fg=FG)
                     dir_lbl.config(
                         text="Scan otomatis dijalankan.", fg=FG2)
                 cancel_h.pack_forget()
