@@ -971,7 +971,7 @@ class MTManager:
         Tooltip(c5, "Jalankan Uninstall.exe pada folder instalasi MT")
         
         # Install / Duplikat MT dropdown
-        h8, c8 = make_pill_btn(tb, "\u2b07 Install MT  \u25be", self._install_mt_menu,
+        h8, c8 = make_pill_btn(tb, "+ Install MT", self._install_mt_menu,
                                bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
                                font_size=10, padx=12, pady=7, radius=10)
         h8.pack(side="left", pady=8, padx=2)
