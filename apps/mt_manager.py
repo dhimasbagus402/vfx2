@@ -1637,14 +1637,12 @@ class MTManager:
         uninstall_exe = None
 
         if t["type"] == "MT4":
-            # Gunakan install_path yang sudah diparse saat scan
             install_path = t.get("install_path")
             if install_path:
                 candidate = Path(install_path) / "uninstall.exe"
                 if candidate.exists():
                     uninstall_exe = candidate
             if uninstall_exe is None:
-                # Fallback: coba di folder AppData terminal
                 candidate = terminal_path / "uninstall.exe"
                 if candidate.exists():
                     uninstall_exe = candidate
@@ -1658,9 +1656,7 @@ class MTManager:
                     f"Folder AppData:\n{terminal_path}"
                 )
                 return
-
         else:
-            # MT5: Uninstall.exe ada langsung di folder MT
             candidate = terminal_path / "uninstall.exe"
             if candidate.exists():
                 uninstall_exe = candidate
@@ -1674,224 +1670,9 @@ class MTManager:
             )
             return
 
-        # ── Konfirmasi popup custom ──────────────────────────────────────────
-        f = self._font
-        win = tk.Toplevel(self.root)
-        win.title("Konfirmasi Uninstall MT")
-        win.configure(bg=BG)
-        win.resizable(False, False)
-        win.attributes("-topmost", True)
-        win.update_idletasks()
+        # Jalankan langsung di background — tidak ada popup/window
+        self._status(f"\u23f3 Uninstall {t['name']} ({t['type']}) berjalan di background\u2026")
 
-        body = tk.Frame(win, bg=BG, padx=28, pady=22)
-        body.pack(fill="both", expand=True)
-
-        # Icon + judul
-        hdr = tk.Frame(body, bg=BG)
-        hdr.pack(fill="x", pady=(0, 14))
-        tk.Label(hdr, text="⚠", bg=BG, fg="#e07b00",
-                 font=(f, 22)).pack(side="left", padx=(0, 14))
-        title_col = tk.Frame(hdr, bg=BG)
-        title_col.pack(side="left", fill="x", expand=True)
-        tk.Label(title_col, text="Uninstall MT",
-                 bg=BG, fg=FG, font=(f, 12, "bold"), anchor="w").pack(anchor="w")
-        tk.Label(title_col, text=f"{t['name']}  ·  {t['type']}",
-                 bg=BG, fg=FG3, font=(f, 9), anchor="w").pack(anchor="w")
-
-        # Info path
-        info_box = tk.Frame(body, bg=BG3, padx=12, pady=10)
-        info_box.pack(fill="x", pady=(0, 14))
-        tk.Label(info_box, text="FILE", bg=BG3, fg=FG3,
-                 font=(f, 8), anchor="w").pack(anchor="w")
-        exe_path_str = str(uninstall_exe)
-        home_str = str(Path.home())
-        if exe_path_str.startswith(home_str):
-            exe_path_str = "~" + exe_path_str[len(home_str):]
-        tk.Label(info_box, text=exe_path_str, bg=BG3, fg=ACCENT2,
-                 font=(self._font_mono, 9), anchor="w",
-                 wraplength=420, justify="left").pack(anchor="w")
-
-        tk.Label(body,
-                 text="Proses uninstall akan dijalankan via Wine.\n"
-                      "Pastikan terminal MetaTrader sudah ditutup sebelum melanjutkan.",
-                 bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w",
-                 wraplength=440).pack(anchor="w", pady=(0, 4))
-
-        # Footer tombol
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
-        foot = tk.Frame(win, bg=BG2, height=48)
-        foot.pack(fill="x")
-        foot.pack_propagate(False)
-        fi = tk.Frame(foot, bg=BG2, padx=12)
-        fi.pack(fill="both", expand=True)
-
-        def _run_uninstall():
-            win.destroy()
-            self._run_uninstall_with_progress(uninstall_exe, t)
-
-        run_h, _ = make_pill_btn(fi, "⚠  Lanjutkan Uninstall", _run_uninstall,
-                                 bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
-                                 font_size=9, padx=20, pady=6, radius=7)
-        run_h.pack(side="right", pady=8, padx=(0, 6))
-
-        cancel_h, _ = make_pill_btn(fi, "Batal", win.destroy,
-                                    bg=BG3, fg=FG, hover_bg=BG4,
-                                    font_size=9, padx=20, pady=6, radius=7)
-        cancel_h.pack(side="right", pady=8)
-
-        win.update_idletasks()
-        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - win.winfo_reqwidth()  // 2
-        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - win.winfo_reqheight() // 2
-        win.geometry(f"+{rx}+{ry}")
-        win.deiconify()
-        win.lift()
-        win.focus_force()
-
-    # ── Progress window untuk Uninstall MT ───────────────────────────────────
-    def _run_uninstall_with_progress(self, uninstall_exe: Path, t: dict):
-        """
-        Jalankan uninstall.exe via Wine dengan progress window.
-        - Indeterminate progress bar berputar selama proses berjalan
-        - Polling setiap 500ms untuk cek apakah proses sudah selesai
-        - Setelah selesai: jalankan Scan MT otomatis
-        - Hapus xdotool jika terinstall (tidak dipakai saat uninstall)
-        """
-        import time
-
-        f = self._font
-
-        # ── Progress window ──────────────────────────────────────────────
-        pwin = tk.Toplevel(self.root)
-        pwin.title("Uninstall MT — Sedang Berjalan")
-        pwin.configure(bg=BG)
-        pwin.resizable(False, False)
-        pwin.attributes("-topmost", True)
-        pwin.update_idletasks()
-        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 240
-        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 130
-        pwin.geometry(f"480x260+{rx}+{ry}")
-        pwin.deiconify()
-
-        # Header
-        hdr = tk.Frame(pwin, bg=BG2, height=48)
-        hdr.pack(fill="x"); hdr.pack_propagate(False)
-        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
-        hdr_inner.pack(fill="both", expand=True)
-        tk.Label(hdr_inner, text="\u26d4  Uninstall MT",
-                 bg=BG2, fg="#e07b00", font=(f, 12, "bold")).pack(side="left", fill="y")
-        tk.Frame(pwin, bg=BORDER, height=1).pack(fill="x")
-
-        # Body
-        body = tk.Frame(pwin, bg=BG, padx=28, pady=20)
-        body.pack(fill="both", expand=True)
-
-        icon_lbl = tk.Label(body, text="\u23f3", bg=BG, fg="#e07b00", font=(f, 22))
-        icon_lbl.grid(row=0, column=0, rowspan=3, padx=(0, 16), sticky="n")
-
-        title_lbl = tk.Label(body,
-            text=f"Menjalankan uninstall {t['name']}…",
-            bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w")
-        title_lbl.grid(row=0, column=1, sticky="w")
-
-        sub_lbl = tk.Label(body,
-            text=f"{t['type']}  ·  harap tunggu, jangan tutup window ini",
-            bg=BG, fg=FG2, font=(f, 9), anchor="w")
-        sub_lbl.grid(row=1, column=1, sticky="w", pady=(3, 8))
-
-        # Progress bar (indeterminate menggunakan animasi manual)
-        prog_frame = tk.Frame(body, bg=BG)
-        prog_frame.grid(row=2, column=1, sticky="ew")
-        body.columnconfigure(1, weight=1)
-
-        progress = ProgressBar(prog_frame, height=6, bg=BG4, fill="#e07b00")
-        progress.pack(fill="x")
-
-        pct_var = tk.StringVar(value="")
-        pct_lbl = tk.Label(prog_frame, textvariable=pct_var,
-                           bg=BG, fg=FG3, font=(f, 8))
-        pct_lbl.pack(anchor="e", pady=(3, 0))
-
-        # Footer
-        tk.Frame(pwin, bg=BORDER, height=1).pack(fill="x")
-        foot = tk.Frame(pwin, bg=BG2, height=44); foot.pack(fill="x")
-        foot.pack_propagate(False)
-        fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
-
-        close_h, _ = make_pill_btn(fi, "Tutup", pwin.destroy,
-                                   bg=BG3, fg=FG, hover_bg=BG4,
-                                   font_size=9, padx=20, pady=6, radius=7)
-        # Tombol tutup hanya muncul setelah selesai
-
-        _state = {"proc": None, "done": False, "anim_pct": 0.0, "anim_dir": 1}
-
-        # ── Animasi indeterminate progress bar ──────────────────────────
-        def _animate():
-            if _state["done"]:
-                return
-            p = _state["anim_pct"]
-            d = _state["anim_dir"]
-            p += d * 0.03
-            if p >= 1.0:
-                p = 1.0; _state["anim_dir"] = -1
-            elif p <= 0.0:
-                p = 0.0; _state["anim_dir"] = 1
-            _state["anim_pct"] = p
-            progress.set(p)
-            pwin.after(60, _animate)
-
-        # ── Polling: cek apakah proses wine sudah selesai ────────────────
-        def _poll():
-            proc = _state["proc"]
-            if proc is None:
-                pwin.after(300, _poll)
-                return
-            if proc.poll() is None:
-                # Masih berjalan
-                pwin.after(500, _poll)
-                return
-            # Proses selesai
-            _state["done"] = True
-            _on_uninstall_done(proc.returncode)
-
-        def _on_uninstall_done(returncode: int):
-            progress.set(1.0)
-            pct_var.set("")
-
-            # ── Hapus xdotool jika terinstall ────────────────────────────
-            xdotool_removed = False
-            try:
-                if shutil.which("xdotool"):
-                    result = subprocess.run(
-                        ["sudo", "apt-get", "remove", "-y", "xdotool"],
-                        capture_output=True, text=True, timeout=30
-                    )
-                    xdotool_removed = (result.returncode == 0)
-            except Exception:
-                pass
-
-            if returncode == 0:
-                icon_lbl.config(text="\u2713", fg="#5ecf3e")
-                title_lbl.config(text="Uninstall selesai!", fg="#5ecf3e")
-                extra = "\nxdotool berhasil dihapus." if xdotool_removed else ""
-                sub_lbl.config(
-                    text=f"Proses uninstall {t['name']} selesai.{extra}\n"
-                          "Scan MT dijalankan otomatis…",
-                    fg=FG2)
-            else:
-                icon_lbl.config(text="\u26a0", fg=WARN)
-                title_lbl.config(
-                    text=f"Uninstall selesai (kode: {returncode})", fg=WARN)
-                sub_lbl.config(
-                    text="Proses wine sudah berhenti. Cek apakah uninstall berhasil.",
-                    fg=FG2)
-
-            close_h.pack(side="right", pady=8)
-            self._status(
-                f"Uninstall {t['name']} selesai (rc={returncode}).")
-            # Scan MT otomatis setelah uninstall selesai
-            self.root.after(800, self.scan_terminals)
-
-        # ── Jalankan wine di thread background ──────────────────────────
         def _do():
             try:
                 proc = subprocess.Popen(
@@ -1899,30 +1680,23 @@ class MTManager:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                _state["proc"] = proc
+                proc.wait()
+                rc = proc.returncode
+                if rc == 0:
+                    self.root.after(0, lambda: self._status(
+                        f"\u2713 Uninstall {t['name']} selesai. Scan MT dijalankan\u2026"))
+                else:
+                    self.root.after(0, lambda: self._status(
+                        f"\u26a0 Uninstall {t['name']} selesai (kode: {rc}). Scan MT dijalankan\u2026"))
+                self.root.after(0, self.scan_terminals)
             except FileNotFoundError:
-                pwin.after(0, lambda: (
-                    icon_lbl.config(text="\u2715", fg=DANGER),
-                    title_lbl.config(text="Wine tidak ditemukan", fg=DANGER),
-                    sub_lbl.config(
-                        text="Perintah 'wine' tidak tersedia.\n"
-                             "Install wine: sudo apt install wine",
-                        fg=DANGER),
-                    close_h.pack(side="right", pady=8),
-                ))
-                _state["done"] = True
+                self.root.after(0, lambda: self._status(
+                    "\u2715 Uninstall gagal: perintah 'wine' tidak ditemukan."))
             except Exception as e:
-                pwin.after(0, lambda err=e: (
-                    icon_lbl.config(text="\u2715", fg=DANGER),
-                    title_lbl.config(text="Gagal menjalankan uninstall", fg=DANGER),
-                    sub_lbl.config(text=str(err), fg=DANGER),
-                    close_h.pack(side="right", pady=8),
-                ))
-                _state["done"] = True
+                self.root.after(0, lambda err=e: self._status(
+                    f"\u2715 Uninstall gagal: {err}"))
 
         threading.Thread(target=_do, daemon=True).start()
-        pwin.after(100, _poll)
-        _animate()
 
     # ── Open MT (jalankan terminal.exe / terminal64.exe) ──────────────────────
     def open_mt(self):
@@ -2170,399 +1944,78 @@ class MTManager:
             return proc.returncode == 0
 
     @staticmethod
-    def _xdotool_fill_installer(win_id: str, dir_val: str, group_val: str,
-                                 log_fn=None) -> bool:
-        """
-        Isi field "Installation folder" dan "Program group" di window installer
-        Wine/Inno Setup menggunakan xdotool.
-
-        Strategi (robust):
-          1. Fokus & raise window, tunggu fully painted
-          2. Dapatkan geometri window (posisi + ukuran)
-          3. Klik langsung ke koordinat field pertama (Installation folder)
-             berdasarkan rasio posisi relatif window — lebih reliable dari Tab
-          4. Ctrl+A + Delete untuk clear, lalu type nilai baru karakter per karakter
-          5. Ulangi untuk field "Program group" (di bawah field pertama)
-          6. Klik tombol Next (pojok kanan bawah) atau tekan Alt+N
-        """
-        import time
-
-        def _run(cmd, timeout=5):
-            try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-                if log_fn:
-                    log_fn(f"xdotool {' '.join(str(c) for c in cmd[1:])}: rc={r.returncode}"
-                           + (f" out={r.stdout.strip()}" if r.stdout.strip() else ""))
-                return r
-            except Exception as e:
-                if log_fn:
-                    log_fn(f"xdotool error: {e}")
-                return None
-
-        def _ok(cmd, timeout=5):
-            r = _run(cmd, timeout)
-            return r is not None and r.returncode == 0
-
-        def _type_field(value: str):
-            """Ketik nilai ke field yang sedang fokus, pakai xdotool type dengan delay."""
-            # Gunakan --clearmodifiers agar Caps Lock / Shift tidak interfere
-            # --delay 30ms antar karakter agar Wine buffer tidak overflow
-            _ok(["xdotool", "key", "--window", win_id, "--clearmodifiers", "ctrl+a"])
-            time.sleep(0.08)
-            _ok(["xdotool", "key", "--window", win_id, "--clearmodifiers", "Delete"])
-            time.sleep(0.08)
-            # Type nilai — pecah per 20 karakter untuk hindari buffer drop
-            chunk = 20
-            for start in range(0, len(value), chunk):
-                part = value[start:start + chunk]
-                _ok(["xdotool", "type", "--window", win_id,
-                     "--clearmodifiers", "--delay", "30", part])
-                time.sleep(0.05)
-
-        # ── 1. Fokus & raise ────────────────────────────────────────────
-        _ok(["xdotool", "windowfocus", "--sync", win_id])
-        time.sleep(0.4)
-        _ok(["xdotool", "windowraise", win_id])
-        time.sleep(0.3)
-
-        # ── 2. Dapatkan geometri window ─────────────────────────────────
-        geo_r = _run(["xdotool", "getwindowgeometry", "--shell", win_id])
-        win_x, win_y, win_w, win_h = 0, 0, 500, 400
-        if geo_r and geo_r.returncode == 0:
-            for line in geo_r.stdout.splitlines():
-                line = line.strip()
-                if line.startswith("X="):
-                    try: win_x = int(line.split("=")[1])
-                    except ValueError: pass
-                elif line.startswith("Y="):
-                    try: win_y = int(line.split("=")[1])
-                    except ValueError: pass
-                elif line.startswith("WIDTH="):
-                    try: win_w = int(line.split("=")[1])
-                    except ValueError: pass
-                elif line.startswith("HEIGHT="):
-                    try: win_h = int(line.split("=")[1])
-                    except ValueError: pass
-
-        if log_fn:
-            log_fn(f"Window geo: {win_x},{win_y} {win_w}x{win_h}")
-
-        # ── 3. Klik ke field "Installation folder" ──────────────────────
-        # Inno Setup layout (Weltrade/MT4/MT5):
-        #   • Field pertama  ≈ 45% dari atas, 40% dari kiri (area teks entry)
-        #   • Field kedua    ≈ 65% dari atas (Program group)
-        # Koordinat absolut = win_x + offset_x, win_y + offset_y
-        field1_abs_x = win_x + int(win_w * 0.40)
-        field1_abs_y = win_y + int(win_h * 0.45)
-        field2_abs_x = win_x + int(win_w * 0.40)
-        field2_abs_y = win_y + int(win_h * 0.64)
-
-        # Klik field 1 (Installation folder)
-        _ok(["xdotool", "mousemove", "--sync",
-             str(field1_abs_x), str(field1_abs_y)])
-        time.sleep(0.1)
-        _ok(["xdotool", "click", "1"])
-        time.sleep(0.2)
-        _ok(["xdotool", "click", "1"])   # double-click = select all text
-        time.sleep(0.15)
-
-        _type_field(dir_val)
-        time.sleep(0.25)
-
-        # ── 4. Klik ke field "Program group" ────────────────────────────
-        _ok(["xdotool", "mousemove", "--sync",
-             str(field2_abs_x), str(field2_abs_y)])
-        time.sleep(0.1)
-        _ok(["xdotool", "click", "1"])
-        time.sleep(0.2)
-        _ok(["xdotool", "click", "1"])
-        time.sleep(0.15)
-
-        _type_field(group_val)
-        time.sleep(0.25)
-
-        # ── 5. Klik Next ─────────────────────────────────────────────────
-        # Tombol Next di Inno Setup ada di kanan bawah, sekitar 75% x, 90% y
-        # Fallback: Alt+N (shortcut default Inno Setup untuk &Next)
-        next_abs_x = win_x + int(win_w * 0.76)
-        next_abs_y = win_y + int(win_h * 0.91)
-        _ok(["xdotool", "mousemove", "--sync",
-             str(next_abs_x), str(next_abs_y)])
-        time.sleep(0.1)
-        _ok(["xdotool", "click", "1"])
-        time.sleep(0.4)
-
-        # Fallback: jika Next belum terpencet (window masih sama), kirim Alt+N
-        _ok(["xdotool", "key", "--window", win_id,
-             "--clearmodifiers", "alt+n"])
-        time.sleep(0.3)
-
-        return True
-
     def _run_mt_installer(self, installer_path: Path, qty: int, base_name: str = ""):
-        """Jalankan installer sebanyak qty kali via Wine, satu per satu.
+        """Jalankan installer sebanyak qty kali via Wine di background.
 
-        - Deteksi tipe installer (NSIS / Inno Setup / unknown)
-        - NSIS: coba /S /D= /GROUP= (silent)
-        - Inno Setup / unknown: jalankan normal, lalu pakai xdotool untuk
-          auto-fill field "Installation folder" & "Program group"
+        - Deteksi tipe installer (NSIS / Inno Setup)
+        - Coba silent install (/S atau /VERYSILENT) untuk setiap instance
         - Setiap instance mendapat suffix angka: "Nama 1", "Nama 2", dst.
+        - Semua berjalan di background thread — tidak ada popup/window
         """
-        f = self._font
+        base_stem = base_name.strip() if base_name.strip() else installer_path.stem
+        inst_type = self._detect_installer_type(installer_path)
 
-        base_stem    = base_name.strip() if base_name.strip() else installer_path.stem
-        inst_type    = self._detect_installer_type(installer_path)
-        has_xdotool  = bool(shutil.which("xdotool"))
-
-        # ── Progress window ──────────────────────────────────────────────
-        win = tk.Toplevel(self.root)
-        win.title("Menjalankan Installer")
-        win.configure(bg=BG)
-        win.resizable(False, False)
-        win.update_idletasks()
-        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 240
-        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 140
-        win.geometry(f"480x280+{rx}+{ry}")
-        win.deiconify()
-
-        body = tk.Frame(win, bg=BG, padx=28, pady=20)
-        body.pack(fill="both", expand=True)
-
-        icon_lbl = tk.Label(body, text="\u2b07", bg=BG, fg="#5ecf3e",
-                            font=(f, 22))
-        icon_lbl.grid(row=0, column=0, rowspan=4, padx=(0, 16), sticky="n")
-
-        title_lbl = tk.Label(body, text="Memulai installer\u2026",
-                             bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w")
-        title_lbl.grid(row=0, column=1, sticky="w")
-
-        sub_lbl = tk.Label(body, text=installer_path.name,
-                           bg=BG, fg=FG2, font=(f, 9), anchor="w")
-        sub_lbl.grid(row=1, column=1, sticky="w", pady=(2, 0))
-
-        dir_var = tk.StringVar(value="")
-        dir_lbl = tk.Label(body, textvariable=dir_var,
-                           bg=BG, fg=FG3, font=(f, 8), anchor="w")
-        dir_lbl.grid(row=2, column=1, sticky="w", pady=(2, 6))
-
-        prog_frame = tk.Frame(body, bg=BG)
-        prog_frame.grid(row=3, column=1, sticky="ew")
-        body.columnconfigure(1, weight=1)
-
-        progress = ProgressBar(prog_frame, height=3, bg=BG4, fill="#5ecf3e")
-        progress.pack(fill="x")
-
-        count_var = tk.StringVar(value=f"0 / {qty}")
-        tk.Label(prog_frame, textvariable=count_var,
-                 bg=BG, fg=FG3, font=(f, 8)).pack(anchor="e", pady=(3, 0))
-
-        # method label (NSIS silent / xdotool / manual)
-        method_var = tk.StringVar(value="")
-        tk.Label(body, textvariable=method_var,
-                 bg=BG, fg=FG3, font=(f, 8), anchor="w").grid(
-                 row=4, column=1, sticky="w", pady=(4, 0))
-
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
-        foot = tk.Frame(win, bg=BG2, height=44)
-        foot.pack(fill="x")
-        foot.pack_propagate(False)
-        fi = tk.Frame(foot, bg=BG2, padx=12)
-        fi.pack(fill="both", expand=True)
-
-        close_h, _ = make_pill_btn(fi, "Tutup", win.destroy,
-                                   bg=BG3, fg=FG, hover_bg=BG4,
-                                   font_size=9, padx=20, pady=6, radius=7)
-
-        _cancelled    = [False]
-        _current_proc = [None]
-
-        def _do_cancel():
-            _cancelled[0] = True
-            proc = _current_proc[0]
-            if proc and proc.poll() is None:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=3)
-                except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-            icon_lbl.config(text="\u23f9", fg=WARN)
-            title_lbl.config(text="Instalasi dibatalkan.", fg=WARN)
-            sub_lbl.config(text="Proses yang sedang berjalan dihentikan.", fg=FG2)
-            dir_var.set("")
-            method_var.set("")
-            cancel_h.pack_forget()
-            close_h.pack(side="right", pady=8)
-
-        cancel_h, _ = make_pill_btn(fi, "\u2715  Cancel", _do_cancel,
-                                    bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
-                                    font_size=9, padx=20, pady=6, radius=7)
-        cancel_h.pack(side="right", pady=8, padx=(0, 6))
+        self._status(
+            f"\u23f3 Install {installer_path.name} \u00d7{qty} berjalan di background\u2026")
 
         def _do():
-            import time
             errors   = []
-            done_cnt = [0]
+            done_cnt = 0
 
             for i in range(qty):
-                if _cancelled[0]:
-                    break
+                suffix      = f" {i + 1}" if qty > 1 else ""
+                dir_value   = f"{base_stem}{suffix}"
+                win_path    = f"C:\\Program Files (x86)\\{dir_value}"
 
-                suffix     = f" {i + 1}" if qty > 1 else ""
-                # Nilai yang akan diisi di installer
-                dir_value  = f"{base_stem}{suffix}"   # nama folder (tanpa path lengkap)
-                group_value = f"{base_stem}{suffix}"  # nama program group
-                # Wine full path untuk NSIS /D=
-                win_path   = f"C:\\Program Files (x86)\\{dir_value}"
+                self.root.after(0, lambda n=i+1, d=dir_value: self._status(
+                    f"\u23f3 Install {n}/{qty}: {d}\u2026"))
 
-                def _upd(idx=i, dv=dir_value):
-                    title_lbl.config(text=f"Installer {idx + 1} dari {qty}\u2026")
-                    count_var.set(f"{idx} / {qty}")
-                    progress.set(idx / qty if qty > 1 else 0.05)
-                    dir_var.set(f"\u2192 {dv}")
-                win.after(0, _upd)
-
-                # ── Tahap 1: Coba silent install ────────────────────────
                 silent_ok = False
                 if inst_type in ("inno", "nsis"):
-                    mode_label = (
-                        "Mode: Inno Setup silent (/VERYSILENT)"
-                        if inst_type == "inno"
-                        else "Mode: NSIS silent (/S)"
-                    )
-                    win.after(0, lambda ml=mode_label: method_var.set(ml))
                     try:
                         proc = self._try_silent_install(
-                            installer_path, inst_type,
-                            win_path, group_value,
-                        )
+                            installer_path, inst_type, win_path, dir_value)
                         if proc:
-                            _current_proc[0] = proc
                             silent_ok = self._silent_succeeded(proc, win_path)
-                            _current_proc[0] = None
-                            if _cancelled[0]:
-                                break
-                            if silent_ok:
-                                done_cnt[0] += 1
-                            else:
-                                # Silent diluncurkan tapi folder tidak terbuat
-                                # → log sebagai warning, lanjut ke fallback
+                            if not silent_ok:
                                 errors.append(
-                                    f"[{i+1}] Silent gagal (folder tidak terbuat),"
-                                    f" fallback ke GUI."
-                                )
+                                    f"[{i+1}] Silent gagal (folder tidak terbuat).")
                     except FileNotFoundError:
                         errors.append(f"[{i+1}] wine tidak ditemukan")
                         break
                     except Exception as e:
                         errors.append(f"[{i+1}] silent error: {e}")
 
-                if _cancelled[0]:
-                    break
-
-                # ── Tahap 2: Fallback GUI + xdotool (jika silent gagal) ──
+                # Fallback: jalankan GUI installer normal (tanpa xdotool)
                 if not silent_ok:
-                    if has_xdotool:
-                        win.after(0, lambda: method_var.set(
-                            "Fallback: xdotool auto-fill — jangan sentuh keyboard/mouse"))
-                    else:
-                        win.after(0, lambda: method_var.set(
-                            "Fallback: manual — isi folder & group sesuai nama di atas"))
-
                     try:
                         proc = subprocess.Popen(
                             ["wine", str(installer_path)],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                         )
-                        _current_proc[0] = proc
-
-                        if has_xdotool:
-                            wine_win_id = None
-                            for _ in range(40):
-                                if _cancelled[0]:
-                                    break
-                                time.sleep(0.5)
-                                r = subprocess.run(
-                                    ["xdotool", "search", "--onlyvisible",
-                                     "--pid", str(proc.pid), "--name", ""],
-                                    capture_output=True, text=True, timeout=5,
-                                )
-                                ids = r.stdout.strip().splitlines()
-                                if not ids:
-                                    continue
-                                best_id   = None
-                                best_area = 0
-                                for wid in ids:
-                                    wid = wid.strip()
-                                    if not wid:
-                                        continue
-                                    gr = subprocess.run(
-                                        ["xdotool", "getwindowgeometry",
-                                         "--shell", wid],
-                                        capture_output=True, text=True, timeout=3,
-                                    )
-                                    if gr.returncode != 0:
-                                        continue
-                                    ww = wh = 0
-                                    for gl in gr.stdout.splitlines():
-                                        gl = gl.strip()
-                                        if gl.startswith("WIDTH="):
-                                            try: ww = int(gl.split("=")[1])
-                                            except ValueError: pass
-                                        elif gl.startswith("HEIGHT="):
-                                            try: wh = int(gl.split("=")[1])
-                                            except ValueError: pass
-                                    area = ww * wh
-                                    if area > best_area and ww >= 200 and wh >= 200:
-                                        best_area = area
-                                        best_id   = wid
-                                if best_id:
-                                    wine_win_id = best_id
-                                    break
-
-                            if wine_win_id and not _cancelled[0]:
-                                time.sleep(2.0)
-                                self._xdotool_fill_installer(
-                                    wine_win_id, dir_value, group_value)
-
                         proc.wait()
-                        _current_proc[0] = None
-                        if not _cancelled[0]:
-                            done_cnt[0] += 1
-
+                        done_cnt += 1
                     except FileNotFoundError:
                         errors.append(f"[{i+1}] wine tidak ditemukan")
                         break
                     except Exception as e:
                         errors.append(f"[{i+1}] {e}")
-
-            def _done():
-                if _cancelled[0]:
-                    return
-                progress.set(1.0)
-                count_var.set(f"{done_cnt[0]} / {qty}")
-                dir_var.set("")
-                method_var.set("")
-                if errors:
-                    icon_lbl.config(text="\u26a0", fg=WARN)
-                    title_lbl.config(text=f"Selesai dengan {len(errors)} error.", fg=WARN)
-                    sub_lbl.config(text="\n".join(errors[:3]), fg=DANGER)
                 else:
-                    icon_lbl.config(text="\u2713", fg="#5ecf3e")
-                    title_lbl.config(
-                        text=f"{done_cnt[0]} installer selesai dijalankan.", fg=FG)
-                    sub_lbl.config(
-                        text="Scan otomatis dijalankan.", fg=FG2)
-                cancel_h.pack_forget()
-                close_h.pack(side="right", pady=8)
-                self._status(
-                    f"Install MT selesai: {done_cnt[0]}/{qty} dari {installer_path.name}")
-                self.root.after(800, self.scan_terminals)
+                    done_cnt += 1
 
-            win.after(0, _done)
+            def _finish():
+                if errors:
+                    self._status(
+                        f"\u26a0 Install selesai: {done_cnt}/{qty}  —  "
+                        + "  |  ".join(errors[:3]))
+                else:
+                    self._status(
+                        f"\u2713 Install selesai: {done_cnt}/{qty} dari "
+                        f"{installer_path.name}. Scan MT dijalankan\u2026")
+                self.scan_terminals()
+
+            self.root.after(0, _finish)
 
         threading.Thread(target=_do, daemon=True).start()
 
@@ -2899,7 +2352,7 @@ class MTManager:
         # Preview nama folder
         hint_var = tk.StringVar(value="")
         tk.Label(body, textvariable=hint_var,
-                 bg=BG, fg=FG3, font=(f, 8), anchor="w",
+                 bg=BG, fg=FG3, font=(f, 10), anchor="w",
                  wraplength=480).pack(fill="x", pady=(4, 8))
 
         def _update_hint(*_):
