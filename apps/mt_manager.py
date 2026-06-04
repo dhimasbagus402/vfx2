@@ -3797,6 +3797,22 @@ class MTManager:
     def _autostart_is_on(self, t: dict) -> bool:
         return self._autostart_desktop_path(t).exists()
 
+    def _autostart_icon_path(self, t: dict):
+        """Cari file icon Terminal.ico (MT5) atau terminal.ico (MT4) dari folder instalasi."""
+        if t["type"] == "MT5":
+            # MT5: icon ada di folder instalasi langsung (path)
+            ico = Path(t["path"]) / "Terminal.ico"
+            return ico if ico.exists() else None
+        else:
+            # MT4: cari di install_path dulu, fallback ke AppData path
+            ip = t.get("install_path")
+            if ip:
+                ico = Path(ip) / "terminal.ico"
+                if ico.exists():
+                    return ico
+            ico = Path(t["path"]) / "terminal.ico"
+            return ico if ico.exists() else None
+
     def _autostart_set(self, t: dict, enable: bool) -> bool:
         dst = self._autostart_desktop_path(t)
         if enable:
@@ -3807,11 +3823,14 @@ class MTManager:
                     f"File terminal.exe / terminal64.exe tidak ditemukan\n"
                     f"untuk {t['name']} ({t['type']}).\n\nAutostart tidak dapat dibuat.")
                 return False
+            icon_path = self._autostart_icon_path(t)
+            icon_line = f"Icon={icon_path}\n" if icon_path else ""
             dst.write_text(
                 "[Desktop Entry]\n"
                 "Type=Application\n"
                 f"Name={t['name']}\n"
                 f"Exec=wine \"{exe}\"\n"
+                f"{icon_line}"
                 "Hidden=false\n"
                 "NoDisplay=false\n"
                 "X-GNOME-Autostart-enabled=true\n"
