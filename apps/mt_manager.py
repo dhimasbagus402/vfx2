@@ -4075,6 +4075,9 @@ class MTManager:
                     mql4 = folder / "MQL4"
                     if mql4.exists():
                         _n4, _ip4 = _parse_origin(folder)
+                        # Lewati jika folder instalasi dari origin.txt tidak ditemukan
+                        if _ip4 is None:
+                            continue
                         self.terminals.append({
                             "type": "MT4", "name": _n4, "path": str(folder),
                             "install_path": _ip4,
