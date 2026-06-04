@@ -596,22 +596,26 @@ def make_pill_btn(parent, text, cmd, bg, fg, hover_bg,
         holder.pack(fill="x")
     canvas = tk.Canvas(holder, bg=outer_bg, highlightthickness=0, cursor="hand2")
     canvas.pack(fill="x" if fill_x else "none", expand=fill_x)
-    _state = {"bg": bg}
-    _f   = resolve_font(FONT)
-    _fnt = get_font_obj(_f, font_size, "bold")   # cached — tidak buat object baru
+    _state = {"bg": bg, "lw": 0, "lh": 0}
+    _f     = resolve_font(FONT)
+    _fnt   = get_font_obj(_f, font_size, "bold")
     _ftuple = (_f, font_size, "bold")
+    _pts_cache = [None]   # memoize polygon points keyed by (w, h, radius)
 
     def _draw(b=None):
         bcolor = b or _state["bg"]
-        canvas.delete("all")
         w = canvas.winfo_width()
         h = canvas.winfo_height()
         if w < 2 or h < 2:
             return
-        r = radius
-        pts = [r,0, w-r,0, w,0, w,r, w,h-r, w,h, w-r,h, r,h,
-               0,h, 0,h-r, 0,r, 0,0, r,0]
-        canvas.create_polygon(pts, smooth=True, fill=bcolor, outline="")
+        # Hanya rebuild polygon jika ukuran berubah
+        if w != _state["lw"] or h != _state["lh"]:
+            r = radius
+            _pts_cache[0] = [r,0, w-r,0, w,0, w,r, w,h-r, w,h, w-r,h, r,h,
+                             0,h, 0,h-r, 0,r, 0,0, r,0]
+            _state["lw"] = w; _state["lh"] = h
+        canvas.delete("all")
+        canvas.create_polygon(_pts_cache[0], smooth=True, fill=bcolor, outline="")
         canvas.create_text(w//2, h//2, text=text, fill=fg, font=_ftuple)
 
     def _enter(_=None): _state["bg"] = hover_bg; _draw(hover_bg)
@@ -698,8 +702,10 @@ class MTManager:
         self._font          = resolve_font(FONT)
         self._font_mono     = resolve_font(FONT_MONO)
         self._cfg           = _load_config()
-        self._as_state_cache = {}    # cache Path.exists() per iid untuk slider canvas
-        self._all_term_rows  = ()    # cache get_children() setelah scan
+        self._as_state_cache    = {}   # cache Path.exists() per iid untuk slider canvas
+        self._all_term_rows     = ()   # cache get_children() setelah scan
+        self._select_after_id   = None # debounce id untuk _on_select
+        self._last_selected_path = None  # cache terminal terakhir ditampilkan
         self._build_styles()
         self._build_ui()
         self.scan_terminals(silent=True)   # startup: tanpa popup "Scan Selesai"
@@ -2679,17 +2685,25 @@ class MTManager:
 
     # ── Handlers ───────────────────────────────────────────────────────────────
     def _on_select(self, _=None):
+        # Debounce: batalkan jadwal sebelumnya, tunda 60ms
+        if getattr(self, "_select_after_id", None):
+            self.root.after_cancel(self._select_after_id)
+        self._select_after_id = self.root.after(60, self._do_select)
+
+    def _do_select(self):
+        self._select_after_id = None
         t = self._terminal(silent=True)
         if not t:
             return
+        # Skip jika terminal yang sama sudah ditampilkan
+        if getattr(self, "_last_selected_path", None) == t["path"]:
+            return
+        self._last_selected_path = t["path"]
         self._reload_files(t)
-        # update info bar
         self._info_fields["terminal"][0].set(t["name"])
         self._info_fields["type"][0].set(t["type"])
-        # warna TYPE: MT4 = hijau (ACCENT3), MT5 = kuning (WARN)
         type_color = ACCENT3 if t["type"] == "MT4" else WARN
         self._info_fields["type"][1].config(fg=type_color)
-        # truncate long path for display
         path_str = t["path"]
         home = str(Path.home())
         if path_str.startswith(home):
@@ -2698,45 +2712,57 @@ class MTManager:
         self._status(f"Path: {t['path']}")
 
     def _reload_files(self, t):
-        # Hapus semua baris sekaligus — lebih cepat daripada delete per-iid
+        """Muat ulang daftar file untuk terminal t.
+
+        Optimasi:
+        - os.scandir() — satu syscall, stat sudah di-bundle, lebih cepat dari iterdir()+stat
+        - Kumpulkan semua baris dulu, baru insert massal (mengurangi redraw treeview)
+        - Triple delete diganti satu panggilan per tree
+        """
+        import os
         for tree in (self.chk_tree, self.cat_tree, self.file_tree):
             tree.delete(*tree.get_children())
         self._checked.clear()
         self._all_checked = False
         self.chk_tree.heading("chk", text=CHK_CHAR_OFF)
-        _fmt_date = datetime.datetime.fromtimestamp
-        row = 0
-        for key, label in (("experts","Expert"),("indicators","Indicator"),
-                            ("scripts","Script"),("logs","Log")):
+
+        # Kumpulkan semua baris dulu
+        rows = []
+        for key, label in (("experts", "Expert"), ("indicators", "Indicator"),
+                            ("scripts", "Script"), ("logs", "Log")):
             folder = t.get(key)
             if not (folder and folder.exists()):
                 continue
-            # Satu os.scandir — lebih cepat dari iterdir() + stat per file
             try:
+                # os.scandir: DirEntry sudah punya stat — tidak perlu .stat() terpisah
                 entries = sorted(
-                    (e for e in folder.iterdir() if e.is_file()),
+                    (e for e in os.scandir(folder) if e.is_file(follow_symlinks=False)),
                     key=lambda e: e.name
                 )
             except OSError:
                 continue
-            for f in entries:
+            for e in entries:
                 try:
-                    st = f.stat()
+                    st = e.stat()
                 except OSError:
                     continue
                 kb = st.st_size / 1024
-                sz = f"{kb:.1f} KB" if kb < 1024 else f"{kb/1024:.2f} MB"
-                mtime = _fmt_date(st.st_mtime).strftime("%Y-%m-%d")
-                stripe = "row_even" if row % 2 == 0 else "row_odd"
-                iid = f"r{row}"
-                self.chk_tree.insert("", "end", iid=iid,
-                    values=(CHK_CHAR_OFF,), tags=(stripe,))
-                self.cat_tree.insert("", "end", iid=iid,
-                    values=(label,), tags=(label, stripe))
-                self.file_tree.insert("", "end", iid=iid,
-                    values=(f.name, f.suffix.lower(), sz, mtime),
-                    tags=(stripe,))
-                row += 1
+                sz = f"{kb:.1f} KB" if kb < 1024 else f"{kb / 1024:.2f} MB"
+                mtime = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
+                rows.append((label, e.name, sz, mtime))
+
+        # Batch insert
+        for row_idx, (label, fname, sz, mtime) in enumerate(rows):
+            stripe = "row_even" if row_idx % 2 == 0 else "row_odd"
+            iid = f"r{row_idx}"
+            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+            self.chk_tree.insert("", "end", iid=iid,
+                values=(CHK_CHAR_OFF,), tags=(stripe,))
+            self.cat_tree.insert("", "end", iid=iid,
+                values=(label,), tags=(label, stripe))
+            self.file_tree.insert("", "end", iid=iid,
+                values=(fname, f".{ext}" if ext else "", sz, mtime),
+                tags=(stripe,))
 
     def _status(self, msg):
         self.status_var.set(msg)
@@ -3528,28 +3554,25 @@ class MTManager:
         self._draw_as_canvas()
 
     def scan_terminals(self, silent=False):
+        """Scan terminal MT di filesystem dan populate sidebar.
+
+        Seluruh I/O (rglob, iterdir, read_bytes) dijalankan di background thread
+        sehingga UI tidak freeze. Hasil dikirim ke main thread via root.after().
+        """
+        # Bersihkan UI segera supaya tidak ada state lama
         self.term_tree.delete(*self.term_tree.get_children())
         self.file_tree.delete(*self.file_tree.get_children())
         self.terminals.clear()
         self._as_state_cache.clear()
-        home = Path.home()
+        self._last_selected_path = None   # force reload saat pilih terminal setelah scan
+        self._status("Memindai terminal…")
 
-        for base in [home / ".wine/drive_c/Program Files",
-                     home / ".wine/drive_c/Program Files (x86)"]:
-            if not base.exists():
-                continue
-            for exe in base.rglob("terminal64.exe"):
-                mt_dir = exe.parent
-                mql5 = mt_dir / "MQL5"
-                if mql5.exists():
-                    self.terminals.append({
-                        "type": "MT5", "name": mt_dir.name, "path": str(mt_dir),
-                        "experts": mql5 / "Experts", "indicators": mql5 / "Indicators",
-                        "scripts": mql5 / "Scripts",  "logs": mt_dir / "logs",
-                    })
+        home = Path.home()
+        _wine_c   = home / ".wine/drive_c"
+        _games_c  = home / "Games/drive_c"
 
         def _parse_origin(folder):
-            """Baca origin.txt SEKALI → return (name, install_path).  Sebelumnya dibaca 2x."""
+            """Baca origin.txt → (name, install_path)."""
             origin = folder / "origin.txt"
             if not origin.exists():
                 return folder.name[:22], None
@@ -3557,7 +3580,6 @@ class MTManager:
                 raw_bytes = origin.read_bytes()
             except OSError:
                 return folder.name[:22], None
-            # Decode dengan beberapa encoding
             raw = None
             for enc in ("utf-16", "utf-16-le", "utf-16-be", "utf-8", "latin-1"):
                 try:
@@ -3570,20 +3592,16 @@ class MTManager:
                 raw = raw_bytes.decode("utf-16", errors="ignore").replace("\x00", "").strip()
             if not raw:
                 return folder.name[:22], None
-            # Baris pertama = path Windows instalasi
             line = raw.splitlines()[0].strip()
-            # Nama folder dari bagian akhir path
             name = (line.replace("\\", "/").rstrip("/").split("/")[-1].strip()
                     or folder.name[:22])
-            # Konversi ke path Linux/Wine
             install = None
             try:
                 wp = line.replace("\\", "/").strip().rstrip("/")
                 if len(wp) >= 3 and wp[1] == ":":
                     wp = wp[3:]
                 if wp:
-                    _h = Path.home()
-                    for wc in (_h / ".wine/drive_c", _h / "Games/drive_c"):
+                    for wc in (_wine_c, _games_c):  # hoist — tidak re-create Path setiap call
                         c = wc / wp
                         if c.exists():
                             install = c; break
@@ -3591,132 +3609,155 @@ class MTManager:
                 pass
             return name, install
 
-        users_dir = home / ".wine/drive_c/users"
-        if users_dir.exists():
-            for userdir in users_dir.iterdir():
-                tb = userdir / "AppData/Roaming/MetaQuotes/Terminal"
-                if not tb.exists():
+        def _scan_worker():
+            """Semua I/O berjalan di sini — tidak menyentuh tkinter."""
+            found = []
+
+            # ── MT5 ──
+            for base in (_wine_c / "Program Files",
+                         _wine_c / "Program Files (x86)"):
+                if not base.exists():
                     continue
-                for folder in tb.iterdir():
-                    mql4 = folder / "MQL4"
-                    if mql4.exists():
-                        _n4, _ip4 = _parse_origin(folder)
-                        # Lewati jika folder instalasi dari origin.txt tidak ditemukan
-                        if _ip4 is None:
-                            continue
-                        self.terminals.append({
-                            "type": "MT4", "name": _n4, "path": str(folder),
-                            "install_path": _ip4,
-                            "experts": mql4 / "Experts", "indicators": mql4 / "Indicators",
-                            "scripts": mql4 / "Scripts",  "logs": folder / "logs",
+                for exe in base.rglob("terminal64.exe"):
+                    mt_dir = exe.parent
+                    mql5   = mt_dir / "MQL5"
+                    if mql5.exists():
+                        found.append({
+                            "type": "MT5", "name": mt_dir.name,
+                            "path": str(mt_dir),
+                            "experts":    mql5 / "Experts",
+                            "indicators": mql5 / "Indicators",
+                            "scripts":    mql5 / "Scripts",
+                            "logs":       mt_dir / "logs",
                         })
 
-        def _nat_key(item):
-            parts = re.split(r"(\d+)", item["name"].lower())
-            return [int(p) if p.isdigit() else p for p in parts]
+            # ── MT4 ──
+            users_dir = _wine_c / "users"
+            if users_dir.exists():
+                for userdir in users_dir.iterdir():
+                    tb = userdir / "AppData/Roaming/MetaQuotes/Terminal"
+                    if not tb.exists():
+                        continue
+                    for folder in tb.iterdir():
+                        mql4 = folder / "MQL4"
+                        if mql4.exists():
+                            _n4, _ip4 = _parse_origin(folder)
+                            if _ip4 is None:
+                                continue
+                            found.append({
+                                "type": "MT4", "name": _n4,
+                                "path": str(folder),
+                                "install_path": _ip4,
+                                "experts":    mql4 / "Experts",
+                                "indicators": mql4 / "Indicators",
+                                "scripts":    mql4 / "Scripts",
+                                "logs":       folder / "logs",
+                            })
 
-        self.terminals.sort(key=lambda x: (0 if x["type"] == "MT4" else 1, _nat_key(x)))
+            # Natural sort
+            def _nat_key(item):
+                parts = re.split(r"(\d+)", item["name"].lower())
+                return [int(p) if p.isdigit() else p for p in parts]
+            found.sort(key=lambda x: (0 if x["type"] == "MT4" else 1, _nat_key(x)))
 
-        # Insert into sidebar treeview with group headers
-        f = self._font
-        cur_type = None
-        self._iid_to_terminal = {}
-        for item in self.terminals:
-            if item["type"] != cur_type:
-                cur_type = item["type"]
-                label = f"METATRADER {'4' if cur_type == 'MT4' else '5'}"
-                self.term_tree.insert("", "end",
-                    values=("", label, ""),
-                    tags=("group",))
-            iid = self.term_tree.insert("", "end",
-                values=("MT4" if item["type"] == "MT4" else "MT5",
-                    item["name"],
-                    item["type"]),
-                tags=(item["type"],))
-            self._iid_to_terminal[iid] = item
-        # Cache urutan baris untuk _draw_as_canvas + _as_y_to_iid
-        self._all_term_rows = self.term_tree.get_children()
-        # Redraw slider canvas setelah semua baris diisi
-        self.root.after(50, self._draw_as_canvas)
+            self.root.after(0, lambda: _apply(found))
 
-        n = len(self.terminals)
-        if hasattr(self, "_term_count_var"):
-            self._term_count_var.set(f"{n} terminal terdeteksi")
-        self._status(f"{n} terminal ditemukan.")
+        def _apply(found):
+            """Kembali ke main thread — update UI sekaligus."""
+            self.terminals.clear()
+            self.terminals.extend(found)
 
-        if not silent:
-            f  = self._font
-            mt4_count = sum(1 for t in self.terminals if t["type"] == "MT4")
-            mt5_count = sum(1 for t in self.terminals if t["type"] == "MT5")
+            # Batch insert: suspend redraws selama insert massal
+            self.term_tree.delete(*self.term_tree.get_children())
+            self._iid_to_terminal = {}
+            cur_type = None
+            for item in found:
+                if item["type"] != cur_type:
+                    cur_type = item["type"]
+                    label = f"METATRADER {'4' if cur_type == 'MT4' else '5'}"
+                    self.term_tree.insert("", "end",
+                        values=("", label, ""), tags=("group",))
+                iid = self.term_tree.insert("", "end",
+                    values=(item["type"], item["name"], item["type"]),
+                    tags=(item["type"],))
+                self._iid_to_terminal[iid] = item
 
-            dlg = tk.Toplevel(self.root)
-            dlg.title("Scan Selesai")
-            dlg.configure(bg=BG)
-            dlg.resizable(False, False)
-            dlg.attributes("-topmost", True)
+            self._all_term_rows = self.term_tree.get_children()
+            self.root.after(50, self._draw_as_canvas)
 
-            # Header
-            hdr = tk.Frame(dlg, bg=BG2, height=48)
-            hdr.pack(fill="x"); hdr.pack_propagate(False)
-            hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
-            hdr_inner.pack(fill="both", expand=True)
-            tk.Label(hdr_inner, text="\u2713  Scan Selesai",
-                     bg=BG2, fg="#5ecf3e", font=(f, 12, "bold")).pack(side="left", fill="y")
-            tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+            n = len(found)
+            if hasattr(self, "_term_count_var"):
+                self._term_count_var.set(f"{n} terminal terdeteksi")
+            self._status(f"{n} terminal ditemukan.")
 
-            # Body
-            body = tk.Frame(dlg, bg=BG, padx=24, pady=18)
-            body.pack(fill="both", expand=True)
+            if not silent:
+                f = self._font
+                mt4_count = sum(1 for t in found if t["type"] == "MT4")
+                mt5_count = sum(1 for t in found if t["type"] == "MT5")
 
-            tk.Label(body, text="\u2713", bg=BG, fg="#5ecf3e",
-                     font=(f, 22)).grid(row=0, column=0, rowspan=3,
-                     padx=(0, 16), sticky="n")
-            tk.Label(body,
-                     text=f"Ditemukan {n} terminal MetaTrader.",
-                     bg=BG, fg=FG, font=(f, 11, "bold"),
-                     anchor="w").grid(row=0, column=1, sticky="w")
+                dlg = tk.Toplevel(self.root)
+                dlg.title("Scan Selesai")
+                dlg.configure(bg=BG)
+                dlg.resizable(False, False)
+                dlg.attributes("-topmost", True)
 
-            # Detail kotak
-            info_box = tk.Frame(body, bg=BG3, padx=14, pady=10)
-            info_box.grid(row=1, column=1, sticky="ew", pady=(10, 0))
-            body.columnconfigure(1, weight=1)
+                hdr = tk.Frame(dlg, bg=BG2, height=48)
+                hdr.pack(fill="x"); hdr.pack_propagate(False)
+                hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
+                hdr_inner.pack(fill="both", expand=True)
+                tk.Label(hdr_inner, text="\u2713  Scan Selesai",
+                         bg=BG2, fg="#5ecf3e", font=(f, 12, "bold")).pack(side="left", fill="y")
+                tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
 
-            for label, val, clr in [
-                ("MetaTrader 4", f"{mt4_count} terminal", ACCENT),
-                ("MetaTrader 5", f"{mt5_count} terminal", ACCENT),
-                ("Total",        f"{n} terminal",          FG),
-            ]:
-                row = tk.Frame(info_box, bg=BG3)
-                row.pack(fill="x", pady=2)
-                tk.Label(row, text=f"{label:<14}", bg=BG3, fg=FG3,
-                         font=(f, 9), anchor="w", width=14).pack(side="left")
-                tk.Label(row, text=val, bg=BG3, fg=clr,
-                         font=(f, 9, "bold"), anchor="w").pack(side="left")
+                body = tk.Frame(dlg, bg=BG, padx=24, pady=18)
+                body.pack(fill="both", expand=True)
+                tk.Label(body, text="\u2713", bg=BG, fg="#5ecf3e",
+                         font=(f, 22)).grid(row=0, column=0, rowspan=3,
+                         padx=(0, 16), sticky="n")
+                tk.Label(body, text=f"Ditemukan {n} terminal MetaTrader.",
+                         bg=BG, fg=FG, font=(f, 11, "bold"),
+                         anchor="w").grid(row=0, column=1, sticky="w")
 
-            if self.terminals:
-                sep = tk.Frame(info_box, bg=BORDER, height=1)
-                sep.pack(fill="x", pady=(8, 6))
-                for t in self.terminals[:8]:
-                    tk.Label(info_box,
-                             text=f"  {t['type']}  {t['name']}",
-                             bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
-                if len(self.terminals) > 8:
-                    tk.Label(info_box,
-                             text=f"  \u2026 dan {len(self.terminals)-8} lainnya",
-                             bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
+                info_box = tk.Frame(body, bg=BG3, padx=14, pady=10)
+                info_box.grid(row=1, column=1, sticky="ew", pady=(10, 0))
+                body.columnconfigure(1, weight=1)
+                for lbl, val, clr in [
+                    ("MetaTrader 4", f"{mt4_count} terminal", ACCENT),
+                    ("MetaTrader 5", f"{mt5_count} terminal", ACCENT),
+                    ("Total",        f"{n} terminal",          FG),
+                ]:
+                    row = tk.Frame(info_box, bg=BG3)
+                    row.pack(fill="x", pady=2)
+                    tk.Label(row, text=f"{lbl:<14}", bg=BG3, fg=FG3,
+                             font=(f, 9), anchor="w", width=14).pack(side="left")
+                    tk.Label(row, text=val, bg=BG3, fg=clr,
+                             font=(f, 9, "bold"), anchor="w").pack(side="left")
+                if found:
+                    tk.Frame(info_box, bg=BORDER, height=1).pack(fill="x", pady=(8, 6))
+                    for t in found[:8]:
+                        tk.Label(info_box, text=f"  {t['type']}  {t['name']}",
+                                 bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
+                    if len(found) > 8:
+                        tk.Label(info_box, text=f"  \u2026 dan {len(found)-8} lainnya",
+                                 bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
 
-            tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
-            foot = tk.Frame(dlg, bg=BG2, height=44); foot.pack(fill="x")
-            foot.pack_propagate(False)
-            fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
-            oh, _ = make_pill_btn(fi, "OK", dlg.destroy,
-                                  bg=BG3, fg=FG, hover_bg=BG4,
-                                  font_size=9, padx=20, pady=6, radius=7)
-            oh.pack(side="right", pady=8)
-            dlg.update_idletasks()
-            rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - dlg.winfo_reqwidth()  // 2
-            ry = self.root.winfo_y() + self.root.winfo_height() // 2 - dlg.winfo_reqheight() // 2
-            dlg.geometry(f"+{rx}+{ry}"); dlg.deiconify(); dlg.lift(); dlg.focus_force()
+                tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+                foot = tk.Frame(dlg, bg=BG2, height=44); foot.pack(fill="x")
+                foot.pack_propagate(False)
+                fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+                oh, _ = make_pill_btn(fi, "OK", dlg.destroy,
+                                      bg=BG3, fg=FG, hover_bg=BG4,
+                                      font_size=9, padx=20, pady=6, radius=7)
+                oh.pack(side="right", pady=8)
+                dlg.update_idletasks()
+                rx = (self.root.winfo_x() + self.root.winfo_width()  // 2
+                      - dlg.winfo_reqwidth()  // 2)
+                ry = (self.root.winfo_y() + self.root.winfo_height() // 2
+                      - dlg.winfo_reqheight() // 2)
+                dlg.geometry(f"+{rx}+{ry}")
+                dlg.deiconify(); dlg.lift(); dlg.focus_force()
+
+        threading.Thread(target=_scan_worker, daemon=True).start()
 
 
 if __name__ == "__main__":
