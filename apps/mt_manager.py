@@ -1758,7 +1758,7 @@ class MTManager:
                     stderr=subprocess.DEVNULL,
                 )
                 proc.wait()
-                self.root.after(800, self.scan_terminals)
+                self.root.after(800, lambda: self.scan_terminals(silent=True))
                 self.root.after(0, lambda: self._status(
                     f"Uninstall {t['name']} selesai (rc={proc.returncode})."))
             except FileNotFoundError:
@@ -2086,7 +2086,7 @@ class MTManager:
                 else:
                     self._status(
                         f"Install MT selesai: {done_cnt}/{qty} dari {installer_path.name}")
-                self.root.after(800, self.scan_terminals)
+                self.root.after(800, lambda: self.scan_terminals(silent=True))
             self.root.after(0, _finish)
 
         threading.Thread(target=_do, daemon=True).start()
@@ -2637,7 +2637,7 @@ class MTManager:
                 close_h.pack(side="right", pady=8)
                 self._status(
                     f"Duplikat MT selesai: {done_cnt[0]}/{qty} dari {src_folder.name}")
-                self.root.after(800, self.scan_terminals)
+                self.root.after(800, lambda: self.scan_terminals(silent=True))
 
             win.after(0, _done)
 
