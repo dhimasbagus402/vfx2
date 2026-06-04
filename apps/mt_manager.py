@@ -1670,7 +1670,7 @@ class MTManager:
             )
             return
 
-        # Jalankan langsung di background — tidak ada popup/window
+        # Langsung jalankan di background — tidak ada popup/window
         self._status(f"\u23f3 Uninstall {t['name']} ({t['type']}) berjalan di background\u2026")
 
         def _do():
@@ -1943,32 +1943,34 @@ class MTManager:
         except Exception:
             return proc.returncode == 0
 
-    @staticmethod
     def _run_mt_installer(self, installer_path: Path, qty: int, base_name: str = ""):
         """Jalankan installer sebanyak qty kali via Wine di background.
 
-        - Deteksi tipe installer (NSIS / Inno Setup)
-        - Coba silent install (/S atau /VERYSILENT) untuk setiap instance
-        - Setiap instance mendapat suffix angka: "Nama 1", "Nama 2", dst.
+        - Deteksi tipe installer (NSIS / Inno Setup / unknown)
+        - Coba silent install (/S atau /VERYSILENT) dulu
+        - Fallback: jalankan GUI installer normal (user isi sendiri)
         - Semua berjalan di background thread — tidak ada popup/window
         """
         base_stem = base_name.strip() if base_name.strip() else installer_path.stem
         inst_type = self._detect_installer_type(installer_path)
 
         self._status(
-            f"\u23f3 Install {installer_path.name} \u00d7{qty} berjalan di background\u2026")
+            f"\u23f3 Install {installer_path.name}"
+            + (f" \u00d7{qty}" if qty > 1 else "")
+            + " berjalan di background\u2026")
 
         def _do():
             errors   = []
             done_cnt = 0
 
             for i in range(qty):
-                suffix      = f" {i + 1}" if qty > 1 else ""
-                dir_value   = f"{base_stem}{suffix}"
-                win_path    = f"C:\\Program Files (x86)\\{dir_value}"
+                suffix    = f" {i + 1}" if qty > 1 else ""
+                dir_value = f"{base_stem}{suffix}"
+                win_path  = f"C:\\Program Files (x86)\\{dir_value}"
 
-                self.root.after(0, lambda n=i+1, d=dir_value: self._status(
-                    f"\u23f3 Install {n}/{qty}: {d}\u2026"))
+                if qty > 1:
+                    self.root.after(0, lambda n=i+1, d=dir_value: self._status(
+                        f"\u23f3 Install {n}/{qty}: {d}\u2026"))
 
                 silent_ok = False
                 if inst_type in ("inno", "nsis"):
@@ -1979,14 +1981,15 @@ class MTManager:
                             silent_ok = self._silent_succeeded(proc, win_path)
                             if not silent_ok:
                                 errors.append(
-                                    f"[{i+1}] Silent gagal (folder tidak terbuat).")
+                                    f"[{i+1}] Silent gagal (folder tidak terbuat),"
+                                    " fallback ke GUI.")
                     except FileNotFoundError:
                         errors.append(f"[{i+1}] wine tidak ditemukan")
                         break
                     except Exception as e:
                         errors.append(f"[{i+1}] silent error: {e}")
 
-                # Fallback: jalankan GUI installer normal (tanpa xdotool)
+                # Fallback: jalankan GUI installer normal, tunggu selesai
                 if not silent_ok:
                     try:
                         proc = subprocess.Popen(
@@ -2007,7 +2010,7 @@ class MTManager:
             def _finish():
                 if errors:
                     self._status(
-                        f"\u26a0 Install selesai: {done_cnt}/{qty}  —  "
+                        f"\u26a0 Install selesai: {done_cnt}/{qty}  \u2014  "
                         + "  |  ".join(errors[:3]))
                 else:
                     self._status(
