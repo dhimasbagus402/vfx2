@@ -455,6 +455,31 @@ class MTManager:
         Tooltip(self.wget_entry, 'Masukkan URL atau perintah wget dari dropfile.id',
                 delay=200, position="above")
 
+        def _wget_paste():
+            """Ambil teks dari clipboard sistem, isi ke entry wget."""
+            try:
+                text = self.root.clipboard_get().strip()
+            except Exception:
+                text = ""
+            if not text:
+                self.wget_status_var.set("Clipboard kosong.")
+                return
+            # Bersihkan placeholder lalu set teks
+            _focus_in(None)
+            self.wget_var.set(text)
+            self.wget_entry.config(fg=FG)
+            # Animasi flash border hijau sebentar
+            entry_frame.config(bg=ACCENT3)
+            self.root.after(300, lambda: entry_frame.config(bg=BORDER2))
+            self.wget_entry.focus_set()
+            self.wget_status_var.set("")
+
+        paste_h, paste_c = make_pill_btn(row1, "\u29c9 Paste", _wget_paste,
+                                          bg=BG3, fg=FG, hover_bg=BG4,
+                                          font_size=10, padx=12, pady=7, radius=7)
+        paste_h.pack(side="left", padx=(0, 6))
+        Tooltip(paste_c, "Paste URL dari clipboard ke kolom input", position="above")
+
         dl_h, _ = make_pill_btn(row1, "\u2193 Download", self.wget_download,
                                  bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
                                  font_size=10, padx=14, pady=7, radius=7)
