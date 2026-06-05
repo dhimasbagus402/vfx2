@@ -140,14 +140,24 @@ def extract_file(path: Path, dest_dir: Path) -> tuple[bool, str]:
 # ── yad file picker ────────────────────────────────────────────────────────────
 def yad_pick_file(title: str, filetypes: list[str], start_dir: Path,
                   root_widget=None) -> str | None:
-    """Buka yad file picker. Mengembalikan path string atau None."""
+    """Buka yad file picker. Mengembalikan path string atau None.
+
+    Semua ekstensi digabung menjadi SATU --file-filter agar langsung tampil
+    semua file yang cocok tanpa harus memilih dari dropdown filter.
+    Format yad: "Label | *.ext1 *.ext2 ..."
+    """
     cmd = ["yad", "--file-selection",
            "--title", title,
            "--filename", str(start_dir) + "/",
            "--button=Pilih:0", "--button=Batal:1"]
     if filetypes:
-        for ft in filetypes:
-            cmd += ["--file-filter", ft]
+        # Buat label dari ekstensi: "*.ex4 *.ex5 *.mq4 *.mq5"
+        exts  = " ".join(filetypes)
+        label = exts.replace("*.", "").replace(" ", "/").upper()  # "EX4/EX5/MQ4/MQ5"
+        # Satu filter gabungan → semua ekstensi tampil sekaligus
+        cmd += ["--file-filter", f"{label} | {exts}"]
+        # Filter "Semua File" sebagai pilihan kedua
+        cmd += ["--file-filter", "Semua File | *"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if r.returncode == 0:
@@ -158,7 +168,7 @@ def yad_pick_file(title: str, filetypes: list[str], start_dir: Path,
 
 
 # ── Themed popup helper (message-only, non-GUI) ────────────────────────────────
-# Actual popup dibuat di frontend.py; ini hanya data model.
+# Actual popup dibuat di ui.py; ini hanya data model.
 POPUP_ICONS = {
     "success": ("\u2713", "#5ecf3e"),
     "error":   ("\u2717", DANGER),
