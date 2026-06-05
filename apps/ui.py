@@ -1,0 +1,1914 @@
+"""
+frontend.py — MT Manager
+Kelas MTManager: membangun UI tkinter dan menangani event.
+Semua logika bisnis didelegasikan ke system.py.
+Semua widget custom diimport dari widgets.py.
+"""
+
+import tkinter as tk
+import tkinter.font as tkf
+from tkinter import ttk
+from pathlib import Path
+import shutil
+
+import system as be
+from widgets import (
+    RoundedBox, RoundScrollbar, Tooltip, Badge, ProgressBar,
+    make_pill_btn, themed_popup, resolve_font, get_font_obj,
+)
+from system import (
+    __version__,
+    BG, BG2, BG3, BG4, ACCENT, ACCENT2, ACCENT3, ACCENT_DIM,
+    BORDER, BORDER2, DANGER, WARN, FG, FG2, FG3, WHITE, PURPLE,
+    FONT, FONT_MONO, SIDEBAR_W,
+    TABLE_FONT_SIZE, TABLE_HEADING_SIZE, TABLE_COLUMNS,
+    CAT_COL_WIDTH, CAT_COLORS,
+    AS_COL_WIDTH, AS_TRACK_W, AS_TRACK_H, AS_THUMB_R,
+    AS_COLOR_ON, AS_COLOR_OFF, AS_THUMB_COL,
+    CHK_COL_WIDTH, CHK_FONT_SIZE, CHK_CHAR_OFF, CHK_CHAR_ON,
+    TABLE_ROW_HEIGHT, DOCS_DIR,
+)
+
+
+class MTManager:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("MetaTrader Manager")
+        self.root.geometry("1180x700")
+        self.root.configure(bg=BG)
+        self.root.resizable(True, True)
+        self.root.minsize(900, 520)
+        self.root.after(0, lambda: self.root.attributes("-zoomed", True))
+
+        self.terminals              = []
+        self._font                  = resolve_font(FONT)
+        self._font_mono             = resolve_font(FONT_MONO)
+        self._cfg                   = be.load_config()
+        self._as_state_cache        = {}
+        self._all_term_rows         = ()
+        self._select_after_id       = None
+        self._last_selected_path    = None
+
+        self._build_styles()
+        self._build_ui()
+        self.scan_terminals(silent=True)
+        self.root.after(2000, self._autostart_sync_poll)
+        if self.auto_update_var.get():
+            self.root.after(800, self._auto_update_check)
+
+    # ── Styles ────────────────────────────────────────────────────────────────
+    def _build_styles(self):
+        s = ttk.Style()
+        s.theme_use("clam")
+        f = self._font
+
+        _rh_data = TABLE_FONT_SIZE * 2 + 6
+        _rh_chk  = CHK_FONT_SIZE  * 2 + 6
+        _rh = TABLE_ROW_HEIGHT if TABLE_ROW_HEIGHT > 0 else max(_rh_data, _rh_chk)
+        self._shared_row_height = _rh
+
+        _tv_base = dict(background=BG3, foreground=FG, fieldbackground=BG3,
+                        rowheight=_rh, borderwidth=0, relief="flat",
+                        highlightthickness=0, highlightbackground=BG3, highlightcolor=BG3)
+        _th_base = dict(background=BG4, foreground=FG3, relief="flat",
+                        borderwidth=0, font=(f, TABLE_HEADING_SIZE))
+        _sel_map = [("selected", ACCENT_DIM)]
+        _fg_map  = [("selected", ACCENT)]
+        _th_map  = [("active", BG4)]
+
+        for style, font_sz in (("App", TABLE_FONT_SIZE), ("Chk", CHK_FONT_SIZE), ("Cat", TABLE_FONT_SIZE)):
+            s.configure(f"{style}.Treeview", **_tv_base, font=(f, font_sz))
+            s.configure(f"{style}.Treeview.Heading", **_th_base, padding=(10, 6))
+            s.map(f"{style}.Treeview",
+                  background=_sel_map, foreground=_fg_map)
+            s.map(f"{style}.Treeview.Heading",
+                  background=_th_map, relief=[("active", "flat")])
+            s.layout(f"{style}.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+
+        s.configure("Chk.Treeview.Heading", padding=(0, 6))
+
+        s.configure("Side.Treeview",
+                    background=BG2, foreground=FG, fieldbackground=BG2,
+                    rowheight=44, font=(f, 10), borderwidth=0, relief="flat",
+                    highlightthickness=0, highlightbackground=BG2, highlightcolor=BG2)
+        s.map("Side.Treeview",
+              background=[("selected", BG3)], foreground=[("selected", ACCENT)])
+        s.layout("Side.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+
+        s.layout("Vertical.TScrollbar", [])
+        s.layout("Horizontal.TScrollbar", [])
+
+    # ── UI ────────────────────────────────────────────────────────────────────
+    def _build_ui(self):
+        f  = self._font
+        fm = self._font_mono
+
+        # ── TITLEBAR ──────────────────────────────────────────────────────────
+        titlebar = tk.Frame(self.root, bg=BG2, height=36)
+        titlebar.pack(fill="x", side="top")
+        titlebar.pack_propagate(False)
+        tk.Frame(self.root, bg=BORDER, height=1).pack(fill="x", side="top")
+
+        tb_inner = tk.Frame(titlebar, bg=BG2)
+        tb_inner.pack(fill="both", expand=True, padx=14)
+
+        dots = tk.Frame(tb_inner, bg=BG2)
+        dots.pack(side="left", fill="y")
+        for col in ("#ff5f57", "#febc2e", "#28c840"):
+            c = tk.Canvas(dots, width=11, height=11, bg=BG2, highlightthickness=0)
+            c.pack(side="left", padx=(0, 5), pady=0)
+            c.create_oval(1, 1, 10, 10, fill=col, outline="")
+        dots.pack(side="left", pady=12)
+
+        title_frame = tk.Frame(tb_inner, bg=BG2)
+        title_frame.pack(side="left", padx=10, fill="y")
+        tk.Label(title_frame, text="MetaTrader", bg=BG2, fg=ACCENT,
+                 font=(f, 11, "bold")).pack(side="left")
+        tk.Label(title_frame, text=" Manager \u2014 Linux Edition",
+                 bg=BG2, fg=FG2, font=(f, 11)).pack(side="left")
+        tk.Label(title_frame, text=f"  v{__version__}",
+                 bg=BG2, fg=FG3, font=(f, 9)).pack(side="left", pady=(2, 0))
+
+        # ── BODY ──────────────────────────────────────────────────────────────
+        body = tk.Frame(self.root, bg=BG)
+        body.pack(fill="both", expand=True)
+
+        # ── SIDEBAR ───────────────────────────────────────────────────────────
+        sidebar = tk.Frame(body, bg=BG2, width=SIDEBAR_W)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+        tk.Frame(body, bg=BORDER, width=1).pack(side="left", fill="y")
+
+        tk.Label(sidebar, text="TERMINALS", bg=BG2, fg=FG3,
+                 font=(f, 8), anchor="w", padx=14, pady=10).pack(fill="x")
+
+        scan_wrap = tk.Frame(sidebar, bg=BG2, padx=10)
+        scan_wrap.pack(fill="x", pady=(0, 8))
+        scan_c = tk.Canvas(scan_wrap, bg=BG2, highlightthickness=0,
+                            height=30, cursor="hand2")
+        scan_c.pack(fill="x")
+        self._scan_canvas = scan_c
+        scan_c.bind("<Configure>", self._draw_scan_btn)
+        scan_c.bind("<Enter>",     lambda e: self._draw_scan_btn(hover=True))
+        scan_c.bind("<Leave>",     lambda e: self._draw_scan_btn(hover=False))
+        scan_c.bind("<Button-1>",  lambda e: self.scan_terminals())
+
+        tlist_outer = tk.Frame(sidebar, bg=BG2, padx=8)
+        tlist_outer.pack(fill="both", expand=True, pady=(0, 6))
+
+        tlist_box = RoundedBox(tlist_outer, radius=7, bg=BG2,
+                               border_color=BORDER2, border_w=1)
+        tlist_box.pack(fill="both", expand=True)
+
+        sb_side = RoundScrollbar(tlist_box.inner, command=self._term_yview)
+        sb_side.pack(side="right", fill="y", padx=(0, 2), pady=3)
+        self._sb_side_ref = sb_side
+
+        self._as_canvas = tk.Canvas(
+            tlist_box.inner, width=AS_COL_WIDTH, bg=BG2,
+            highlightthickness=0, cursor="hand2")
+        self._as_canvas.pack(side="left", fill="y")
+        self._as_canvas.bind("<Button-1>",  self._on_as_click)
+        self._as_canvas.bind("<Motion>",    self._on_as_motion)
+        self._as_canvas.bind("<Leave>",     self._on_as_leave)
+        self._as_canvas.bind("<Configure>", lambda e: self._draw_as_canvas())
+        self._as_hover_iid   = None
+        self._as_tooltip_id  = None
+        self._as_tooltip_win = None
+
+        self.term_tree = ttk.Treeview(
+            tlist_box.inner, columns=("badge", "name", "sub"),
+            show="", selectmode="browse", style="Side.Treeview",
+            yscrollcommand=self._on_side_scroll)
+        self.term_tree.config(style="Side.Treeview")
+        self.term_tree.column("badge", width=38, anchor="center", stretch=False)
+        self.term_tree.column("name",  stretch=True, anchor="w")
+        self.term_tree.column("sub",   width=80, anchor="w", stretch=False)
+        self.term_tree.pack(side="left", fill="both", expand=True)
+        self.term_tree.bind("<<TreeviewSelect>>", self._on_select)
+        for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.term_tree.bind(ev, lambda e: self._side_wheel(e))
+            self._as_canvas.bind(ev, lambda e: self._side_wheel(e))
+        self.term_tree.tag_configure("MT4",   foreground=WHITE)
+        self.term_tree.tag_configure("MT5",   foreground=WHITE)
+        self.term_tree.tag_configure("group", foreground=FG3, font=(f, 8))
+
+        # ── MAIN PANEL ────────────────────────────────────────────────────────
+        main = tk.Frame(body, bg=BG)
+        main.pack(side="left", fill="both", expand=True)
+
+        # ── TOOLBAR ───────────────────────────────────────────────────────────
+        toolbar = tk.Frame(main, bg=BG2, height=46)
+        toolbar.pack(fill="x")
+        toolbar.pack_propagate(False)
+        tk.Frame(main, bg=BORDER, height=1).pack(fill="x")
+        tb = tk.Frame(toolbar, bg=BG2, padx=12)
+        tb.pack(fill="both", expand=True)
+
+        _btns = [
+            ("\u2191 Install EA / Indicator", self._install_menu,
+             ACCENT_DIM, ACCENT, "#1d2b36"),
+            None,  # separator
+            ("\u25a6 Browse", self.browse_files, BG3, FG, BG4),
+            ("\u2015 Clear Logs", self.clear_logs, "#261a05", WARN, "#3d2a08"),
+            ("\u232b Delete", self.uninstall_file, "#2a0f0f", DANGER, "#3d1212"),
+            None,
+            ("\u26d4 Uninstall MT", self.uninstall_ea_exe, "#2a1a00", "#e07b00", "#3d2800"),
+            ("+ Install MT", self._install_mt_menu, "#0a1f0a", "#5ecf3e", "#152e15"),
+            None,
+            ("\u25b6 Open MT", self.open_mt, "#0d2200", "#5ecf3e", "#1a3a00"),
+            ("\u270e MetaEditor", self.open_metaeditor, "#001a2a", "#3ab8e0", "#002a3d"),
+        ]
+        _tooltips = {
+            "\u25a6 Browse": "Buka data Folder MT",
+            "\u2015 Clear Logs": "Hapus semua Logs pada MT",
+            "\u232b Delete": "Hapus EA atau Indikator pada MT",
+            "\u26d4 Uninstall MT": "Jalankan Uninstall.exe pada folder instalasi MT",
+            "+ Install MT": "Install MT baru atau Duplikat MT yang sudah ada",
+            "\u25b6 Open MT": "Jalankan terminal MT yang dipilih",
+            "\u270e MetaEditor": "Buka MetaEditor untuk MT yang dipilih",
+        }
+
+        for item in _btns:
+            if item is None:
+                tk.Frame(tb, bg=BORDER2, width=1).pack(side="left", fill="y", padx=6, pady=8)
+                continue
+            lbl, cmd, bg_, fg_, hbg = item
+            h, c = make_pill_btn(tb, lbl, cmd, bg=bg_, fg=fg_, hover_bg=hbg,
+                                  font_size=10, padx=12, pady=7, radius=10)
+            h.pack(side="left", pady=8, padx=2)
+            if lbl == "\u2191 Install EA / Indicator":
+                self._install_btn_holder = h
+                self._install_btn_canvas = c
+            elif lbl == "+ Install MT":
+                self._install_mt_btn_holder = h
+            if lbl in _tooltips:
+                Tooltip(c, _tooltips[lbl])
+
+        # ── CONTENT AREA ──────────────────────────────────────────────────────
+        content_main = tk.Frame(main, bg=BG)
+        content_main.pack(fill="both", expand=True)
+        self._content_canvas = None
+
+        # ── INFO BAR ──
+        info_wrap   = tk.Frame(content_main, bg=BG, padx=14, pady=8)
+        info_wrap.pack(fill="x")
+        info_border = tk.Frame(info_wrap, bg=BORDER2)
+        info_border.pack(fill="x")
+        info_card   = tk.Frame(info_border, bg=BG2, padx=14, pady=8)
+        info_card.pack(fill="x", padx=1, pady=1)
+
+        self._info_fields = {}
+        for key, label, default in [
+            ("terminal", "TERMINAL", "—"),
+            ("type",     "TYPE",     "—"),
+            ("path",     "PATH",     "—"),
+        ]:
+            col = tk.Frame(info_card, bg=BG2)
+            col.pack(side="left", padx=(0, 28))
+            tk.Label(col, text=label, bg=BG2, fg=FG3,
+                     font=(f, 8), anchor="w").pack(anchor="w")
+            var   = tk.StringVar(value=default)
+            color = FG if key == "type" else (ACCENT if key == "path" else FG)
+            lbl   = tk.Label(col, textvariable=var, bg=BG2, fg=color,
+                             font=(f, 10, "bold"), anchor="w")
+            lbl.pack(anchor="w")
+            self._info_fields[key] = (var, lbl)
+
+        # ── FILE TABLE SECTION ──
+        sec_wrap   = tk.Frame(content_main, bg=BG, padx=14)
+        sec_wrap.pack(fill="both", expand=True)
+        sec_header = tk.Frame(sec_wrap, bg=BG)
+        sec_header.pack(fill="x", pady=(0, 4))
+        tk.Label(sec_header, text="EXPERT ADVISORS & INDICATORS",
+                 bg=BG, fg=FG3, font=(f, 8)).pack(side="left")
+        tk.Frame(sec_header, bg=BORDER, height=1).pack(
+            side="left", fill="x", expand=True, padx=(10, 0), pady=4)
+
+        tbl_box = RoundedBox(sec_wrap, radius=7, bg=BG3, border_color=BORDER2, border_w=1)
+        tbl_box.pack(fill="both", expand=True)
+        sb_file = RoundScrollbar(tbl_box.inner, command=self._file_yview)
+        sb_file.pack(side="right", fill="y", padx=(0, 2), pady=3)
+
+        self._checked     = set()
+        self._all_checked = False
+
+        self.chk_tree = ttk.Treeview(tbl_box.inner, columns=("chk",), show="headings",
+                                      selectmode="browse", style="Chk.Treeview",
+                                      yscrollcommand=self._on_chk_scroll)
+        self.chk_tree.configure(takefocus=False)
+        try:
+            self.chk_tree.tk.call("ttk::style", "configure", "Chk.Treeview",
+                                   "-highlightthickness", 0, "-borderwidth", 0)
+        except Exception:
+            pass
+        self.chk_tree.heading("chk", text=CHK_CHAR_OFF, anchor="center",
+                               command=self._toggle_all)
+        self.chk_tree.column("chk", width=CHK_COL_WIDTH, minwidth=CHK_COL_WIDTH,
+                              anchor="center", stretch=False)
+        self.chk_tree.pack(side="left", fill="y")
+        self.chk_tree.tag_configure("row_even", background=BG3)
+        self.chk_tree.tag_configure("row_odd",  background=BG4)
+        self.chk_tree.tag_configure("checked",  background=ACCENT_DIM)
+
+        self.cat_tree = ttk.Treeview(tbl_box.inner, columns=("cat",), show="headings",
+                                      selectmode="browse", style="Cat.Treeview",
+                                      yscrollcommand=self._on_cat_scroll)
+        self.cat_tree.heading("cat", text="CATEGORY", anchor="w")
+        self.cat_tree.column("cat", width=CAT_COL_WIDTH, minwidth=CAT_COL_WIDTH,
+                              anchor="w", stretch=False)
+        self.cat_tree.pack(side="left", fill="y")
+        for label, color in CAT_COLORS.items():
+            self.cat_tree.tag_configure(label, foreground=color)
+        self.cat_tree.tag_configure("row_even", background=BG3)
+        self.cat_tree.tag_configure("row_odd",  background=BG4)
+        self.cat_tree.tag_configure("checked",  background=ACCENT_DIM)
+
+        self.file_tree = ttk.Treeview(tbl_box.inner,
+                                       columns=("name", "type", "size", "modified"),
+                                       show="headings", selectmode="browse",
+                                       style="App.Treeview",
+                                       yscrollcommand=self._on_file_scroll)
+        for col, lbl, w, anc, stretch in TABLE_COLUMNS:
+            self.file_tree.heading(col, text=lbl)
+            self.file_tree.column(col, width=w, anchor=anc, stretch=stretch)
+        self.file_tree.pack(side="left", fill="both", expand=True)
+        self._sb_file = sb_file
+        self.file_tree.tag_configure("row_even", background=BG3)
+        self.file_tree.tag_configure("row_odd",  background=BG4)
+        self.file_tree.tag_configure("checked",  background=ACCENT_DIM)
+
+        def _kill_borders():
+            for tree in (self.chk_tree, self.cat_tree):
+                try:
+                    tree.tk.call(tree, "configure",
+                                 "-highlightthickness", 0,
+                                 "-highlightbackground", BG3,
+                                 "-highlightcolor", BG3,
+                                 "-borderwidth", 0, "-relief", "flat")
+                except Exception:
+                    pass
+        self.root.after_idle(_kill_borders)
+
+        self.chk_tree.bind("<ButtonRelease-1>", self._on_chk_click)
+        self.cat_tree.bind("<ButtonRelease-1>",  self._on_file_click)
+        self.file_tree.bind("<ButtonRelease-1>", self._on_file_click)
+
+        # ── WGET PANEL ──
+        self._wget_anchor = tk.Frame(content_main, bg=BG, height=1)
+        self._wget_anchor.pack(fill="x", side="bottom")
+
+        wget_sec = tk.Frame(content_main, bg=BG, padx=14)
+        wget_sec.pack(fill="x", side="bottom", pady=(8, 14))
+        wget_sec_hdr = tk.Frame(wget_sec, bg=BG)
+        wget_sec_hdr.pack(fill="x", pady=(0, 6))
+        tk.Label(wget_sec_hdr, text="WGET DOWNLOADER",
+                 bg=BG, fg=FG3, font=(f, 8)).pack(side="left")
+        tk.Frame(wget_sec_hdr, bg=BORDER, height=1).pack(
+            side="left", fill="x", expand=True, padx=(10, 0), pady=4)
+
+        wget_border = tk.Frame(wget_sec, bg=BORDER2)
+        wget_border.pack(fill="x")
+        wget_card = tk.Frame(wget_border, bg=BG2, padx=14, pady=12)
+        wget_card.pack(fill="x", padx=1, pady=1)
+
+        row1         = tk.Frame(wget_card, bg=BG2)
+        row1.pack(fill="x")
+        entry_frame  = tk.Frame(row1, bg=BORDER2, highlightthickness=0, padx=1, pady=1)
+        entry_frame.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        self.wget_var   = tk.StringVar()
+        self.wget_entry = tk.Entry(
+            entry_frame, textvariable=self.wget_var,
+            bg=BG3, fg=FG, insertbackground=ACCENT2, relief="flat",
+            font=(fm, 9), highlightthickness=0)
+        self.wget_entry.pack(fill="x", ipady=7, padx=1)
+
+        PLACEHOLDER = 'wget --content-disposition "https://dropfile.id/xxxxxx"'
+        self._wget_placeholder = PLACEHOLDER
+
+        def _focus_in(e):
+            if self.wget_var.get() == PLACEHOLDER:
+                self.wget_var.set("")
+                self.wget_entry.config(fg=FG)
+
+        def _focus_out(e):
+            if not self.wget_var.get().strip():
+                self.wget_var.set(PLACEHOLDER)
+                self.wget_entry.config(fg=FG3)
+
+        self.wget_var.set(PLACEHOLDER)
+        self.wget_entry.config(fg=FG3)
+        self.wget_entry.bind("<FocusIn>",
+            lambda e: (_focus_in(e), entry_frame.config(bg=ACCENT2)))
+        self.wget_entry.bind("<FocusOut>",
+            lambda e: (_focus_out(e), entry_frame.config(bg=BORDER2)))
+        self.wget_entry.bind("<Return>", lambda _: self.wget_download())
+
+        def _show_context_menu(e):
+            popup = tk.Toplevel(self.wget_entry)
+            popup.wm_overrideredirect(True)
+            popup.attributes("-topmost", True)
+            outer = tk.Frame(popup, bg=BORDER2, padx=1, pady=1); outer.pack()
+            inner = tk.Frame(outer, bg=BG3); inner.pack()
+
+            def _do_paste():
+                popup.destroy()
+                self.wget_entry.focus_set()
+                _focus_in(None)
+                self.wget_entry.event_generate("<<Paste>>")
+
+            row = tk.Frame(inner, bg=BG3, cursor="hand2"); row.pack(fill="x")
+            lbl = tk.Label(row, text="\u29c9  Paste", bg=BG3, fg=FG,
+                           font=(fm, 10), anchor="w", padx=12, pady=8)
+            lbl.pack(fill="x")
+
+            def _enter(_): row.config(bg=BG4); lbl.config(bg=BG4, fg=ACCENT)
+            def _leave(_): row.config(bg=BG3); lbl.config(bg=BG3, fg=FG)
+            for w_ in (row, lbl):
+                w_.bind("<Enter>",    _enter)
+                w_.bind("<Leave>",    _leave)
+                w_.bind("<Button-1>", lambda _: _do_paste())
+
+            popup.update_idletasks()
+            pw, ph = popup.winfo_reqwidth(), popup.winfo_reqheight()
+            sx, sy = e.x_root, e.y_root
+            sw = popup.winfo_screenwidth(); sh = popup.winfo_screenheight()
+            if sx + pw > sw: sx = sw - pw - 4
+            if sy + ph > sh: sy = sy - ph - 4
+            popup.wm_geometry(f"+{sx}+{sy}")
+            popup.bind("<FocusOut>", lambda _: popup.destroy())
+            popup.focus_set()
+
+        self.wget_entry.bind("<Button-3>", _show_context_menu)
+        Tooltip(self.wget_entry, 'Masukkan URL atau perintah wget dari dropfile.id',
+                delay=200, position="above")
+
+        dl_h, _ = make_pill_btn(row1, "\u2193 Download", self.wget_download,
+                                 bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
+                                 font_size=10, padx=14, pady=7, radius=7)
+        dl_h.pack(side="left")
+
+        row2 = tk.Frame(wget_card, bg=BG2); row2.pack(fill="x", pady=(8, 0))
+        self.wget_status_var = tk.StringVar(value="")
+        self._wget_lbl = tk.Label(row2, textvariable=self.wget_status_var,
+                                   bg=BG2, fg=FG3, font=(f, 9), anchor="w")
+        self._wget_lbl.pack(side="left")
+        self._wget_pct_var = tk.StringVar(value="")
+        tk.Label(row2, textvariable=self._wget_pct_var,
+                 bg=BG2, fg=ACCENT, font=(f, 9)).pack(side="right")
+
+        self._progress = ProgressBar(wget_card, height=2, bg=BG4, fill=ACCENT)
+        self._progress.pack(fill="x", pady=(4, 0))
+
+        row3 = tk.Frame(wget_card, bg=BG2); row3.pack(fill="x", pady=(6, 0))
+        self.auto_extract_var = tk.BooleanVar(value=True)
+        cb = tk.Checkbutton(
+            row3, text=" Auto-extract enabled \u2014 ZIP, RAR, 7Z, TAR didukung via xarchiver",
+            variable=self.auto_extract_var, bg=BG2, fg=FG3, selectcolor=BG3,
+            activebackground=BG2, activeforeground=FG, font=(f, 9),
+            relief="flat", borderwidth=0, highlightthickness=0, cursor="hand2")
+        cb.pack(side="left")
+        Tooltip(cb, "Ekstrak otomatis jika file berupa ZIP/RAR/7Z", position="above")
+
+        # ── STATUS BAR ──
+        tk.Frame(self.root, bg=BG, height=10).pack(fill="x", side="bottom")
+        status_bar = tk.Frame(self.root, bg=BG2, height=28)
+        status_bar.pack(fill="x", side="bottom")
+        status_bar.pack_propagate(False)
+        sb_inner = tk.Frame(status_bar, bg=BG2, padx=10)
+        sb_inner.pack(fill="both", expand=True)
+
+        self.status_var = tk.StringVar(value="Tekan Scan untuk mendeteksi terminal.")
+        self._mk_status_item(sb_inner, "0 terminal", ACCENT, dot=True, varname="_term_count_var")
+
+        self.auto_update_var = tk.BooleanVar(value=self._cfg.get("auto_update", True))
+
+        def _on_auto_update_toggle():
+            self._cfg["auto_update"] = self.auto_update_var.get()
+            be.save_config(self._cfg)
+
+        au_frame = tk.Frame(sb_inner, bg=BG2)
+        au_frame.pack(side="right", padx=(0, 6), fill="y")
+        au_cb = tk.Checkbutton(
+            au_frame, text="Auto-update", variable=self.auto_update_var,
+            command=_on_auto_update_toggle, bg=BG2, fg=FG3, selectcolor=BG3,
+            activebackground=BG2, activeforeground=FG, font=(self._font, 8),
+            relief="flat", borderwidth=0, highlightthickness=0, cursor="hand2")
+        au_cb.pack(side="left", fill="y")
+        Tooltip(au_cb, "Cek update otomatis saat aplikasi dijalankan", position="above")
+
+        update_c = tk.Canvas(sb_inner, bg=BG2, highlightthickness=0,
+                              height=10, cursor="hand2")
+        update_c.pack(side="right", padx=(0, 4))
+        self._update_canvas = update_c
+
+        def _draw_update_btn(hover=False):
+            update_c.delete("all")
+            w = update_c.winfo_width(); h = update_c.winfo_height()
+            if w < 4 or h < 4:
+                return
+            bg_c = "#1a3a2a" if hover else "#0f2a1e"
+            r    = 5
+            pts  = [r,0, w-r,0, w,0, w,r, w,h-r, w,h, w-r,h, r,h,
+                    0,h, 0,h-r, 0,r, 0,0, r,0]
+            update_c.create_polygon(pts, smooth=True, fill=bg_c, outline="")
+            update_c.create_text(w//2, h//2, text="\u21ba  Update",
+                                 fill=ACCENT3, font=(self._font, 10, "bold"))
+
+        def _run_update(_=None):
+            update_sh = Path.home() / "vfx2" / "update.sh"
+            if not update_sh.exists():
+                themed_popup(self.root, "error", "Update Gagal",
+                    f"Script tidak ditemukan:\n{update_sh}")
+                return
+            self._status("Menjalankan update...")
+            self._show_update_popup(update_sh)
+
+        update_c.bind("<Configure>", lambda e: _draw_update_btn())
+        update_c.bind("<Enter>",     lambda e: _draw_update_btn(hover=True))
+        update_c.bind("<Leave>",     lambda e: _draw_update_btn(hover=False))
+        update_c.bind("<Button-1>",  _run_update)
+        Tooltip(update_c, "Update MT Manager", position="above")
+
+        _fnt2 = tkf.Font(family=self._font, size=11, weight="bold")
+        _rw   = _fnt2.measure("\u21ba  Update") + 10 * 2
+        _rh2  = _fnt2.metrics("linespace") + 3 * 2
+        update_c.config(width=_rw, height=_rh2)
+
+    # ── Status helpers ────────────────────────────────────────────────────────
+    def _mk_status_item(self, parent, text, color, dot=False, icon=None,
+                        side="left", varname=None):
+        f  = self._font
+        fr = tk.Frame(parent, bg=BG2)
+        fr.pack(side=side, padx=(0, 14), fill="y")
+        if dot:
+            d = tk.Canvas(fr, width=7, height=7, bg=BG2, highlightthickness=0)
+            d.pack(side="left", padx=(0, 4), pady=10)
+            d.create_oval(1, 1, 6, 6, fill=color, outline="")
+        if icon:
+            tk.Label(fr, text=icon, bg=BG2, fg=FG3, font=(f, 9)).pack(side="left")
+        lbl = tk.Label(fr, text=text, bg=BG2, fg=FG3, font=(f, 8))
+        lbl.pack(side="left")
+        if varname:
+            var = tk.StringVar(value=text)
+            lbl.config(textvariable=var)
+            setattr(self, varname, var)
+
+    def _status(self, msg):
+        self.status_var.set(msg)
+
+    def _draw_scan_btn(self, _=None, hover=False):
+        c = self._scan_canvas
+        c.delete("all")
+        w = c.winfo_width(); h = c.winfo_height()
+        if w < 4 or h < 4:
+            return
+        bg  = "#1d2b36" if hover else ACCENT_DIM
+        bdr = ACCENT; r = 7
+        pts  = [r,0, w-r,0, w,0, w,r, w,h-r, w,h, w-r,h, r,h,
+                0,h, 0,h-r, 0,r, 0,0, r,0]
+        c.create_polygon(pts, smooth=True, fill=bdr, outline="")
+        pts2 = [r+1,1, w-r-1,1, w-1,1, w-1,r+1, w-1,h-r-1, w-1,h-1,
+                w-r-1,h-1, r+1,h-1, 1,h-1, 1,h-r-1, 1,r+1, 1,1, r+1,1]
+        c.create_polygon(pts2, smooth=True, fill=bg, outline="")
+        c.create_text(w//2, h//2, text="\u25ce  Scan Metatrader",
+                      fill=ACCENT, font=(self._font, 9, "bold"))
+
+    # ── Scroll sync ───────────────────────────────────────────────────────────
+    def _term_yview(self, *args):
+        self.term_tree.yview(*args)
+        self._draw_as_canvas()
+
+    def _on_side_scroll(self, first, last):
+        self._sb_side_ref.set(first, last)
+        self._draw_as_canvas()
+
+    def _side_wheel(self, e):
+        delta = -3 if (e.num == 4 or e.delta > 0) else 3
+        self.term_tree.yview_scroll(delta, "units")
+        self._draw_as_canvas()
+        return "break"
+
+    def _file_yview(self, *args):
+        self.chk_tree.yview(*args)
+        self.cat_tree.yview(*args)
+        self.file_tree.yview(*args)
+
+    def _on_any_scroll(self, first, last):
+        first = float(first)
+        self.chk_tree.yview_moveto(first)
+        self.cat_tree.yview_moveto(first)
+        self.file_tree.yview_moveto(first)
+        self._sb_file.set(first, last)
+
+    _on_file_scroll = _on_any_scroll
+    _on_chk_scroll  = _on_any_scroll
+    _on_cat_scroll  = _on_any_scroll
+
+    # ── Selection handler ─────────────────────────────────────────────────────
+    def _on_select(self, _=None):
+        if getattr(self, "_select_after_id", None):
+            self.root.after_cancel(self._select_after_id)
+        self._select_after_id = self.root.after(60, self._do_select)
+
+    def _do_select(self):
+        self._select_after_id = None
+        t = self._terminal(silent=True)
+        if not t:
+            return
+        if getattr(self, "_last_selected_path", None) == t["path"]:
+            return
+        self._last_selected_path = t["path"]
+        self._reload_files(t)
+        self._info_fields["terminal"][0].set(t["name"])
+        self._info_fields["type"][0].set(t["type"])
+        type_color = ACCENT3 if t["type"] == "MT4" else WARN
+        self._info_fields["type"][1].config(fg=type_color)
+        path_str = t["path"]
+        home = str(Path.home())
+        if path_str.startswith(home):
+            path_str = "~" + path_str[len(home):]
+        self._info_fields["path"][0].set(path_str)
+        self._status(f"Path: {t['path']}")
+
+    # ── File list ─────────────────────────────────────────────────────────────
+    def _reload_files(self, t):
+        for tree in (self.chk_tree, self.cat_tree, self.file_tree):
+            tree.delete(*tree.get_children())
+        self._checked.clear()
+        self._all_checked = False
+        self.chk_tree.heading("chk", text=CHK_CHAR_OFF)
+
+        rows = be.scan_terminal_files(t)
+        for row_idx, (label, fname, sz, mtime) in enumerate(rows):
+            stripe = "row_even" if row_idx % 2 == 0 else "row_odd"
+            iid    = f"r{row_idx}"
+            ext    = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+            self.chk_tree.insert("", "end", iid=iid, values=(CHK_CHAR_OFF,), tags=(stripe,))
+            self.cat_tree.insert("", "end", iid=iid, values=(label,), tags=(label, stripe))
+            self.file_tree.insert("", "end", iid=iid,
+                values=(fname, f".{ext}" if ext else "", sz, mtime), tags=(stripe,))
+
+    # ── Terminal helper ───────────────────────────────────────────────────────
+    def _terminal(self, silent=False):
+        sel = self.term_tree.selection()
+        if not sel:
+            if not silent:
+                themed_popup(self.root, "warning", "Perhatian",
+                              "Pilih terminal terlebih dahulu.")
+            return None
+        iid  = sel[0]
+        item = self.term_tree.item(iid)
+        if "group" in item.get("tags", ()):
+            if not silent:
+                themed_popup(self.root, "warning", "Perhatian", "Pilih terminal, bukan grup.")
+            return None
+        return getattr(self, "_iid_to_terminal", {}).get(iid)
+
+    # ── Checkbox handlers ─────────────────────────────────────────────────────
+    def _on_chk_click(self, event):
+        iid = self.chk_tree.identify_row(event.y)
+        if iid:
+            self._toggle_row(iid)
+
+    def _on_file_click(self, event):
+        iid = event.widget.identify_row(event.y)
+        if iid:
+            self.chk_tree.selection_set(iid)
+            self.cat_tree.selection_set(iid)
+            self.file_tree.selection_set(iid)
+
+    def _toggle_row(self, iid):
+        trees = (self.chk_tree, self.cat_tree, self.file_tree)
+        if iid in self._checked:
+            self._checked.discard(iid)
+            self.chk_tree.set(iid, "chk", CHK_CHAR_OFF)
+            for tree in trees:
+                tree.item(iid, tags=[tg for tg in tree.item(iid, "tags") if tg != "checked"])
+        else:
+            self._checked.add(iid)
+            self.chk_tree.set(iid, "chk", CHK_CHAR_ON)
+            for tree in trees:
+                cur = tree.item(iid, "tags")
+                if "checked" not in cur:
+                    tree.item(iid, tags=(*cur, "checked"))
+        self._update_header_chk()
+
+    def _toggle_all(self):
+        all_iids = self.file_tree.get_children()
+        if not all_iids:
+            return
+        self._all_checked = not self._all_checked
+        self.chk_tree.heading("chk", text=CHK_CHAR_ON if self._all_checked else CHK_CHAR_OFF)
+        trees = (self.chk_tree, self.cat_tree, self.file_tree)
+        if self._all_checked:
+            self._checked = set(all_iids)
+            for i, iid in enumerate(all_iids):
+                self.chk_tree.set(iid, "chk", CHK_CHAR_ON)
+                for tree in trees:
+                    cur = tree.item(iid, "tags")
+                    if "checked" not in cur:
+                        tree.item(iid, tags=(*cur, "checked"))
+                if i % 60 == 59:
+                    self.root.update_idletasks()
+        else:
+            self._checked.clear()
+            for i, iid in enumerate(all_iids):
+                self.chk_tree.set(iid, "chk", CHK_CHAR_OFF)
+                for tree in trees:
+                    tree.item(iid, tags=[tg for tg in tree.item(iid, "tags") if tg != "checked"])
+                if i % 60 == 59:
+                    self.root.update_idletasks()
+
+    def _update_header_chk(self):
+        all_iids = self.file_tree.get_children()
+        if all_iids and len(self._checked) == len(all_iids):
+            self._all_checked = True
+            self.chk_tree.heading("chk", text=CHK_CHAR_ON)
+        else:
+            self._all_checked = False
+            self.chk_tree.heading("chk", text=CHK_CHAR_OFF)
+
+    def _file_info(self):
+        sel = self.file_tree.selection()
+        if not sel:
+            return None, None
+        iid = sel[0]
+        v   = self.file_tree.item(iid, "values")
+        cat = self.cat_tree.item(iid, "values")[0] if self.cat_tree.exists(iid) else None
+        return cat, v[0]
+
+    def _folder_for(self, t, label):
+        return t.get({"Expert":"experts","Indicator":"indicators",
+                      "Script":"scripts","Log":"logs"}.get(label, "experts"))
+
+    # ── Install EA/Indicator ──────────────────────────────────────────────────
+    def _install(self, key, label):
+        t = self._terminal()
+        if not t:
+            return
+        DOCS_DIR.mkdir(exist_ok=True)
+        fp = be.yad_pick_file(title=f"Pilih file {label}",
+                              filetypes=["*.ex4", "*.ex5", "*.mq4", "*.mq5"],
+                              start_dir=DOCS_DIR, root_widget=self.root)
+        if not fp:
+            return
+        dst = t[key]
+        dst.mkdir(parents=True, exist_ok=True)
+        dest = dst / Path(fp).name
+        shutil.copy(fp, dest)
+        self._reload_files(t)
+        self._status(f"'{dest.name}' berhasil diinstall \u2192 {dst}")
+        self._popup_install_result(label, dst)
+
+    def _popup_install_result(self, label, dst):
+        f  = self._font
+        fm = self._font_mono
+        res = tk.Toplevel(self.root)
+        res.title("Install Berhasil"); res.configure(bg=BG)
+        res.resizable(False, False); res.attributes("-topmost", True)
+        hdr_r = tk.Frame(res, bg=BG2, height=48); hdr_r.pack(fill="x"); hdr_r.pack_propagate(False)
+        hdr_ri = tk.Frame(hdr_r, bg=BG2, padx=20); hdr_ri.pack(fill="both", expand=True)
+        tk.Label(hdr_ri, text="\u2713  Install Berhasil",
+                 bg=BG2, fg="#5ecf3e", font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+        body_r = tk.Frame(res, bg=BG, padx=24, pady=18); body_r.pack(fill="both", expand=True)
+        tk.Label(body_r, text="\u2713", bg=BG, fg="#5ecf3e",
+                 font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
+        tk.Label(body_r, text=f"{label} berhasil diinstall.",
+                 bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+        tk.Label(body_r, text=str(dst), bg=BG, fg=FG3,
+                 font=(fm, 8), anchor="w", wraplength=340).grid(row=1, column=1, sticky="w", pady=(4,0))
+        body_r.columnconfigure(1, weight=1)
+        tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+        foot_r = tk.Frame(res, bg=BG2, height=44); foot_r.pack(fill="x"); foot_r.pack_propagate(False)
+        fi_r = tk.Frame(foot_r, bg=BG2, padx=12); fi_r.pack(fill="both", expand=True)
+        oh_r, _ = make_pill_btn(fi_r, "OK", res.destroy,
+                                bg=BG3, fg=FG, hover_bg=BG4, font_size=9, padx=20, pady=6, radius=7)
+        oh_r.pack(side="right", pady=8)
+        res.update_idletasks()
+        self._center_win(res); res.deiconify(); res.lift(); res.focus_force()
+
+    def install_ea(self):
+        self._install("experts", "EA")
+
+    def install_indicator(self):
+        self._install("indicators", "Indicator")
+
+    # ── Delete files ──────────────────────────────────────────────────────────
+    def uninstall_file(self):
+        t = self._terminal()
+        if not t:
+            return
+        f  = self._font
+        fm = self._font_mono
+
+        def _confirm_delete_popup(title, items_label, item_count, detail_lines, on_confirm):
+            dlg = tk.Toplevel(self.root); dlg.title(title); dlg.configure(bg=BG)
+            dlg.resizable(False, False); dlg.attributes("-topmost", True)
+            hdr = tk.Frame(dlg, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
+            hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
+            tk.Label(hdr_inner, text=f"\u232b  {title}",
+                     bg=BG2, fg=DANGER, font=(f, 12, "bold")).pack(side="left", fill="y")
+            tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+            body = tk.Frame(dlg, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
+            info_box = tk.Frame(body, bg=BG3, padx=14, pady=10); info_box.pack(fill="x", pady=(0,10))
+            tk.Label(info_box, text=items_label, bg=BG3, fg=FG2,
+                     font=(f, 10, "bold"), anchor="w").pack(anchor="w", pady=(0,6))
+            for line in detail_lines[:8]:
+                tk.Label(info_box, text=f"  {line}", bg=BG3, fg=FG3,
+                         font=(fm, 8), anchor="w").pack(anchor="w")
+            if len(detail_lines) > 8:
+                tk.Label(info_box, text=f"  \u2026 dan {len(detail_lines)-8} file lainnya",
+                         bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
+            tk.Label(body, text="Tindakan ini tidak dapat dibatalkan.",
+                     bg=BG, fg=FG2, font=(f, 9), anchor="w").pack(anchor="w", pady=(0,4))
+            tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+            foot = tk.Frame(dlg, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
+            fi_f = tk.Frame(foot, bg=BG2, padx=14); fi_f.pack(fill="both", expand=True)
+            def _do(): dlg.destroy(); on_confirm()
+            del_h, _ = make_pill_btn(fi_f, f"\u232b  Hapus {item_count} File", _do,
+                                     bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
+                                     font_size=10, padx=20, pady=7, radius=7)
+            del_h.pack(side="right", pady=8, padx=(0,6))
+            can_h, _ = make_pill_btn(fi_f, "Batal", dlg.destroy,
+                                     bg=BG3, fg=FG, hover_bg=BG4,
+                                     font_size=9, padx=20, pady=6, radius=7)
+            can_h.pack(side="right", pady=8)
+            dlg.update_idletasks(); self._center_win(dlg); dlg.deiconify(); dlg.lift(); dlg.focus_force()
+
+        def _result_popup(deleted, errors):
+            res = tk.Toplevel(self.root); res.title("File Dihapus"); res.configure(bg=BG)
+            res.resizable(False, False); res.attributes("-topmost", True)
+            ok_icon = "\u2713" if not errors else "\u26a0"
+            ok_fg   = "#5ecf3e" if not errors else WARN
+            hdr2 = tk.Frame(res, bg=BG2, height=48); hdr2.pack(fill="x"); hdr2.pack_propagate(False)
+            hdr2i = tk.Frame(hdr2, bg=BG2, padx=20); hdr2i.pack(fill="both", expand=True)
+            tk.Label(hdr2i, text=f"{ok_icon}  File Dihapus",
+                     bg=BG2, fg=ok_fg, font=(f, 12, "bold")).pack(side="left", fill="y")
+            tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+            body2 = tk.Frame(res, bg=BG, padx=24, pady=18); body2.pack(fill="both", expand=True)
+            tk.Label(body2, text=ok_icon, bg=BG, fg=ok_fg,
+                     font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
+            tk.Label(body2, text=f"{deleted} file berhasil dihapus.",
+                     bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+            if errors:
+                tk.Label(body2, text="\n".join(errors[:3]),
+                         bg=BG, fg=DANGER, font=(f, 9), anchor="w",
+                         wraplength=340).grid(row=1, column=1, sticky="w", pady=(4,0))
+            body2.columnconfigure(1, weight=1)
+            tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+            foot2 = tk.Frame(res, bg=BG2, height=44); foot2.pack(fill="x"); foot2.pack_propagate(False)
+            fi2 = tk.Frame(foot2, bg=BG2, padx=12); fi2.pack(fill="both", expand=True)
+            oh, _ = make_pill_btn(fi2, "OK", res.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                  font_size=9, padx=20, pady=6, radius=7)
+            oh.pack(side="right", pady=8)
+            res.update_idletasks(); self._center_win(res); res.deiconify(); res.lift(); res.focus_force()
+
+        if self._checked:
+            targets = []
+            for iid in list(self._checked):
+                try:
+                    v = self.file_tree.item(iid, "values"); fname = v[0]
+                    cat = self.cat_tree.item(iid, "values")[0]
+                    path = self._folder_for(t, cat) / fname
+                    targets.append((fname, path))
+                except Exception:
+                    pass
+            if not targets:
+                self._status("Perhatian: file yang dipilih tidak valid."); return
+            def _do_multi():
+                deleted, errors = 0, []
+                for fname, path in targets:
+                    try:
+                        if path.exists(): path.unlink(); deleted += 1
+                        else: errors.append(f"{fname}: tidak ditemukan")
+                    except Exception as e:
+                        errors.append(f"{fname}: {e}")
+                self._reload_files(t); self._status(f"{deleted} file dihapus.")
+                _result_popup(deleted, errors)
+            _confirm_delete_popup("Konfirmasi Hapus", f"Hapus {len(targets)} file berikut?",
+                                  len(targets), [n for n, _ in targets], _do_multi)
+            return
+
+        cat, fname = self._file_info()
+        if not fname:
+            self._status("Centang file yang ingin dihapus, atau pilih satu baris dari tabel."); return
+        target = self._folder_for(t, cat) / fname
+        if not target.exists():
+            self._status(f"File tidak ditemukan: {target}"); return
+        def _do_single():
+            target.unlink(); self._reload_files(t); self._status(f"'{fname}' dihapus.")
+        _confirm_delete_popup("Konfirmasi Hapus", "Hapus file ini?", 1, [fname], _do_single)
+
+    # ── Clear Logs ────────────────────────────────────────────────────────────
+    def clear_logs(self):
+        t = self._terminal()
+        if not t:
+            return
+        f  = self._font
+        fm = self._font_mono
+        logs_dir  = t.get("logs")
+
+        def _info_popup(title, msg, icon="\u2139", icon_fg=ACCENT):
+            w = tk.Toplevel(self.root); w.title(title); w.configure(bg=BG)
+            w.resizable(False, False); w.attributes("-topmost", True)
+            hdr = tk.Frame(w, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
+            hdr_i = tk.Frame(hdr, bg=BG2, padx=20); hdr_i.pack(fill="both", expand=True)
+            tk.Label(hdr_i, text=f"{icon}  {title}",
+                     bg=BG2, fg=icon_fg, font=(f, 12, "bold")).pack(side="left", fill="y")
+            tk.Frame(w, bg=BORDER, height=1).pack(fill="x")
+            body = tk.Frame(w, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
+            tk.Label(body, text=msg, bg=BG, fg=FG2, font=(f, 10),
+                     justify="left", anchor="w", wraplength=380).pack(anchor="w")
+            tk.Frame(w, bg=BORDER, height=1).pack(fill="x")
+            foot = tk.Frame(w, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
+            fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+            oh, _ = make_pill_btn(fi, "OK", w.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                  font_size=9, padx=20, pady=6, radius=7)
+            oh.pack(side="right", pady=8)
+            w.update_idletasks(); self._center_win(w); w.deiconify(); w.lift(); w.focus_force()
+
+        if not logs_dir or not logs_dir.exists():
+            _info_popup("Logs Tidak Ditemukan",
+                f"Folder logs tidak ditemukan:\n{logs_dir}\n\n"
+                "Pastikan MT pernah dijalankan minimal sekali.",
+                icon="\u26a0", icon_fg=WARN)
+            return
+
+        log_files = [lf for lf in logs_dir.iterdir() if lf.is_file()]
+        if not log_files:
+            _info_popup("Logs Kosong", "Tidak ada file log di terminal ini.")
+            return
+
+        total_kb  = sum(lf.stat().st_size for lf in log_files) / 1024
+        total_str = f"{total_kb:.1f} KB" if total_kb < 1024 else f"{total_kb/1024:.2f} MB"
+
+        dlg = tk.Toplevel(self.root); dlg.title("Hapus Logs"); dlg.configure(bg=BG)
+        dlg.resizable(False, False); dlg.attributes("-topmost", True)
+        hdr = tk.Frame(dlg, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
+        tk.Label(hdr_inner, text="\u2015  Hapus Logs",
+                 bg=BG2, fg=WARN, font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+        body = tk.Frame(dlg, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
+        info_box = tk.Frame(body, bg=BG3, padx=14, pady=10); info_box.pack(fill="x", pady=(0,14))
+        for label, val in [("Terminal", f"{t['type']} — {t['name']}"),
+                           ("Jumlah", f"{len(log_files)} file"),
+                           ("Total size", total_str)]:
+            row = tk.Frame(info_box, bg=BG3); row.pack(fill="x", pady=1)
+            tk.Label(row, text=f"{label:<12}", bg=BG3, fg=FG3, font=(f, 9),
+                     anchor="w", width=12).pack(side="left")
+            tk.Label(row, text=val, bg=BG3, fg=FG2, font=(fm, 9), anchor="w").pack(side="left")
+        tk.Frame(info_box, bg=BORDER, height=1).pack(fill="x", pady=(8,6))
+        for lf in log_files[:8]:
+            tk.Label(info_box, text=f"  {lf.name}", bg=BG3, fg=FG3,
+                     font=(fm, 8), anchor="w").pack(anchor="w")
+        if len(log_files) > 8:
+            tk.Label(info_box, text=f"  \u2026 dan {len(log_files)-8} file lainnya",
+                     bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
+        tk.Label(body, text="Semua file log akan dihapus permanen.\nTindakan ini tidak dapat dibatalkan.",
+                 bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w").pack(anchor="w", pady=(0,4))
+        tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(dlg, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=14); fi.pack(fill="both", expand=True)
+
+        def _confirm():
+            dlg.destroy()
+            deleted, errors = 0, []
+            for lf in log_files:
+                try: lf.unlink(); deleted += 1
+                except Exception as e: errors.append(f"{lf.name}: {e}")
+            t_ref = self._terminal(silent=True)
+            if t_ref:
+                self._reload_files(t_ref)
+            self._status(f"{deleted} file log dihapus dari {t['name']}.")
+            # Result popup
+            res = tk.Toplevel(self.root); res.title("Logs Dihapus"); res.configure(bg=BG)
+            res.resizable(False, False); res.attributes("-topmost", True)
+            ok_icon = "\u2713" if not errors else "\u26a0"
+            ok_fg   = "#5ecf3e" if not errors else WARN
+            hdr2 = tk.Frame(res, bg=BG2, height=48); hdr2.pack(fill="x"); hdr2.pack_propagate(False)
+            hdr2i = tk.Frame(hdr2, bg=BG2, padx=20); hdr2i.pack(fill="both", expand=True)
+            tk.Label(hdr2i, text=f"{ok_icon}  Logs Dihapus",
+                     bg=BG2, fg=ok_fg, font=(f, 12, "bold")).pack(side="left", fill="y")
+            tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+            body2 = tk.Frame(res, bg=BG, padx=24, pady=18); body2.pack(fill="both", expand=True)
+            tk.Label(body2, text=ok_icon, bg=BG, fg=ok_fg,
+                     font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
+            tk.Label(body2, text=f"{deleted} file log berhasil dihapus.",
+                     bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+            err_text = ("\n".join(errors[:3]) if errors else f"Dari terminal: {t['name']}")
+            tk.Label(body2, text=err_text, bg=BG, fg=FG2 if not errors else DANGER,
+                     font=(f, 9), anchor="w", wraplength=340).grid(row=1, column=1, sticky="w", pady=(4,0))
+            body2.columnconfigure(1, weight=1)
+            tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+            foot2 = tk.Frame(res, bg=BG2, height=44); foot2.pack(fill="x"); foot2.pack_propagate(False)
+            fi2 = tk.Frame(foot2, bg=BG2, padx=12); fi2.pack(fill="both", expand=True)
+            oh, _ = make_pill_btn(fi2, "OK", res.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                  font_size=9, padx=20, pady=6, radius=7)
+            oh.pack(side="right", pady=8)
+            res.update_idletasks(); self._center_win(res); res.deiconify(); res.lift(); res.focus_force()
+
+        confirm_h, _ = make_pill_btn(fi, "\u2015  Hapus Semua Log", _confirm,
+                                     bg="#261a05", fg=WARN, hover_bg="#3d2a08",
+                                     font_size=10, padx=20, pady=7, radius=7)
+        confirm_h.pack(side="right", pady=8, padx=(0,6))
+        cancel_h, _ = make_pill_btn(fi, "Batal", dlg.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+        dlg.update_idletasks(); self._center_win(dlg); dlg.deiconify(); dlg.lift(); dlg.focus_force()
+
+    # ── Browse ────────────────────────────────────────────────────────────────
+    def browse_files(self):
+        t = self._terminal()
+        if not t:
+            return
+        target = Path(t["path"])
+        try:
+            if shutil.which("pcmanfm"):
+                import subprocess; subprocess.Popen(["pcmanfm", str(target)])
+            elif shutil.which("xdg-open"):
+                import subprocess; subprocess.Popen(["xdg-open", str(target)])
+            else:
+                themed_popup(self.root, "info", "Path Terminal", str(target))
+        except Exception as e:
+            themed_popup(self.root, "error", "Error", str(e))
+
+    # ── wget Download ─────────────────────────────────────────────────────────
+    def wget_download(self):
+        import shutil as sh_
+        if not sh_.which("wget"):
+            themed_popup(self.root, "error", "wget tidak ditemukan",
+                "wget belum terinstall.\n\nJalankan:\n  sudo apt install wget")
+            return
+        PLACEHOLDER = self._wget_placeholder
+        raw = self.wget_var.get().strip()
+        if not raw or raw == PLACEHOLDER:
+            self.wget_status_var.set("Paste URL dulu."); return
+        import re
+        url_match = re.search(r"https?://[^\s\"']+", raw)
+        if not url_match:
+            self.wget_status_var.set("URL tidak ditemukan."); return
+        url = url_match.group(0).strip("\"' ")
+        DOCS_DIR.mkdir(exist_ok=True)
+        self.wget_status_var.set("Mengunduh\u2026")
+        self._wget_pct_var.set("")
+        self._progress.set(0.0)
+        auto_extract = self.auto_extract_var.get()
+
+        def _on_success(downloaded):
+            def _finish():
+                self.wget_var.set("")
+                self._progress.set(1.0)
+                self._wget_pct_var.set("100%")
+                if downloaded and auto_extract and be.is_archive(downloaded):
+                    self.wget_status_var.set(f"Mengekstrak {downloaded.name}\u2026")
+                    ok, msg = be.extract_file(downloaded, DOCS_DIR)
+                    if ok:
+                        self.wget_status_var.set("Selesai + diekstrak \u2192 Documents/")
+                        self._status(f"wget + ekstrak selesai: {downloaded.name}")
+                        themed_popup(self.root, "success", "Selesai",
+                            f"File diunduh dan diekstrak ke:\n{DOCS_DIR}\n\nFile: {downloaded.name}")
+                    else:
+                        self.wget_status_var.set("Unduh OK, ekstrak gagal.")
+                        themed_popup(self.root, "warning", "Ekstrak Gagal",
+                            f"File berhasil diunduh ke {DOCS_DIR}\n\nTapi ekstrak gagal:\n{msg}")
+                else:
+                    fname = downloaded.name if downloaded else ""
+                    self.wget_status_var.set(f"Selesai \u2192 Documents/{fname}")
+                    self._status(f"wget selesai \u2192 {DOCS_DIR}")
+                    themed_popup(self.root, "success", "Download Selesai",
+                        f"File berhasil diunduh ke:\n{DOCS_DIR}")
+            self.root.after(0, _finish)
+
+        def _on_error(err):
+            self.root.after(0, lambda: (
+                self.wget_status_var.set(f"Gagal: {err[:55]}"),
+                self._progress.set(0.0)))
+
+        def _on_timeout():
+            self.root.after(0, lambda: self.wget_status_var.set("Timeout \u2014 >120 detik."))
+
+        be.wget_download_bg(url, DOCS_DIR, _on_success, _on_error, _on_timeout)
+
+    # ── Open MT / MetaEditor ──────────────────────────────────────────────────
+    def open_mt(self):
+        t = self._terminal()
+        if not t:
+            return
+        exe = be.find_exe(t, "terminal.exe", "terminal64.exe")
+        if exe is None:
+            name = "terminal64.exe" if t["type"] == "MT5" else "terminal.exe"
+            themed_popup(self.root, "error", f"{name} tidak ditemukan",
+                f"File {name} tidak ditemukan untuk {t['name']} ({t['type']})\n"
+                f"Folder: {t['path']}")
+            return
+        self._wine_launch(exe, f"{t['name']} ({t['type']})")
+
+    def open_metaeditor(self):
+        t = self._terminal()
+        if not t:
+            return
+        exe = be.find_exe(t, "metaeditor.exe", "MetaEditor64.exe")
+        if exe is None:
+            name = "MetaEditor64.exe" if t["type"] == "MT5" else "metaeditor.exe"
+            themed_popup(self.root, "error", f"{name} tidak ditemukan",
+                f"File {name} tidak ditemukan untuk {t['name']} ({t['type']})\n"
+                f"Folder: {t['path']}")
+            return
+        self._wine_launch(exe, f"MetaEditor {t['name']} ({t['type']})")
+
+    def _wine_launch(self, exe_path, label: str):
+        self._status(f"Membuka {label}\u2026")
+        def _on_success():
+            self.root.after(0, lambda: self._status(f"{label} sedang dibuka."))
+        def _on_error(reason):
+            if reason == "wine_not_found":
+                self.root.after(0, lambda: themed_popup(self.root, "error",
+                    "Wine tidak ditemukan",
+                    "Perintah 'wine' tidak tersedia.\n"
+                    "Install wine terlebih dahulu:\n  sudo apt install wine"))
+            else:
+                self.root.after(0, lambda r=reason: themed_popup(self.root, "error",
+                    "Gagal", f"Tidak dapat membuka {label}:\n{r}"))
+        be.wine_launch_bg(exe_path, _on_success, _on_error)
+
+    # ── Uninstall MT ──────────────────────────────────────────────────────────
+    def uninstall_ea_exe(self):
+        t = self._terminal()
+        if not t:
+            return
+        f  = self._font
+        terminal_path = Path(t["path"])
+        uninstall_exe = None
+
+        if t["type"] == "MT4":
+            install_path = t.get("install_path")
+            if install_path:
+                candidate = Path(install_path) / "uninstall.exe"
+                if candidate.exists():
+                    uninstall_exe = candidate
+            if uninstall_exe is None:
+                candidate = terminal_path / "uninstall.exe"
+                if candidate.exists():
+                    uninstall_exe = candidate
+            if uninstall_exe is None:
+                ip_str = str(install_path) if install_path else "(gagal parse origin.txt)"
+                themed_popup(self.root, "error", "Uninstall.exe tidak ditemukan",
+                    f"File Uninstall.exe tidak dapat ditemukan untuk terminal:\n"
+                    f"{t['name']} (MT4)\n\nPath instalasi dari origin.txt:\n{ip_str}\n\n"
+                    f"Folder AppData:\n{terminal_path}")
+                return
+        else:
+            candidate = terminal_path / "uninstall.exe"
+            if candidate.exists():
+                uninstall_exe = candidate
+
+        if uninstall_exe is None:
+            themed_popup(self.root, "error", "Uninstall.exe tidak ditemukan",
+                f"File Uninstall.exe tidak dapat ditemukan untuk terminal:\n"
+                f"{t['name']} ({t['type']})\n\nFolder yang diperiksa:\n{terminal_path}")
+            return
+
+        win = tk.Toplevel(self.root); win.title("Konfirmasi Uninstall MT")
+        win.configure(bg=BG); win.resizable(False, False); win.attributes("-topmost", True)
+        body = tk.Frame(win, bg=BG, padx=28, pady=22); body.pack(fill="both", expand=True)
+        hdr = tk.Frame(body, bg=BG); hdr.pack(fill="x", pady=(0,14))
+        tk.Label(hdr, text="\u26a0", bg=BG, fg="#e07b00", font=(f, 22)).pack(side="left", padx=(0,14))
+        title_col = tk.Frame(hdr, bg=BG); title_col.pack(side="left", fill="x", expand=True)
+        tk.Label(title_col, text="Uninstall MT", bg=BG, fg=FG,
+                 font=(f, 12, "bold"), anchor="w").pack(anchor="w")
+        tk.Label(title_col, text=f"{t['name']}  ·  {t['type']}",
+                 bg=BG, fg=FG3, font=(f, 9), anchor="w").pack(anchor="w")
+        info_box = tk.Frame(body, bg=BG3, padx=12, pady=10); info_box.pack(fill="x", pady=(0,14))
+        tk.Label(info_box, text="FILE", bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
+        exe_path_str = str(uninstall_exe)
+        home_str = str(Path.home())
+        if exe_path_str.startswith(home_str):
+            exe_path_str = "~" + exe_path_str[len(home_str):]
+        tk.Label(info_box, text=exe_path_str, bg=BG3, fg=ACCENT2,
+                 font=(self._font_mono, 9), anchor="w", wraplength=420, justify="left").pack(anchor="w")
+        tk.Label(body, text="Proses uninstall akan dijalankan via Wine.\n"
+                             "Pastikan terminal MetaTrader sudah ditutup sebelum melanjutkan.",
+                 bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w",
+                 wraplength=440).pack(anchor="w", pady=(0,4))
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=48); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+
+        def _run_uninstall():
+            win.destroy()
+            self._status(f"Menjalankan uninstall {t['name']} di background\u2026")
+            def _on_done(rc, t_):
+                self.root.after(800, lambda: self.scan_terminals(silent=True))
+                self.root.after(0, lambda: self._status(
+                    f"Uninstall {t_['name']} selesai (rc={rc})."))
+            def _on_wine():
+                self.root.after(0, lambda: themed_popup(self.root, "error",
+                    "Wine tidak ditemukan",
+                    "Perintah 'wine' tidak tersedia.\nInstall wine: sudo apt install wine"))
+            def _on_err(e):
+                self.root.after(0, lambda err=e: themed_popup(self.root, "error",
+                    "Gagal menjalankan uninstall", str(err)))
+            be.run_uninstall_bg(uninstall_exe, t, _on_done, _on_wine, _on_err)
+
+        run_h, _ = make_pill_btn(fi, "\u26a0  Lanjutkan Uninstall", _run_uninstall,
+                                  bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
+                                  font_size=9, padx=20, pady=6, radius=7)
+        run_h.pack(side="right", pady=8, padx=(0,6))
+        cancel_h, _ = make_pill_btn(fi, "Batal", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+        win.update_idletasks(); self._center_win(win); win.deiconify(); win.lift(); win.focus_force()
+
+    # ── Install MT dropdown ────────────────────────────────────────────────────
+    def _make_dropdown(self, anchor_widget, items, flag_attr):
+        if getattr(self, flag_attr, False):
+            return
+        setattr(self, flag_attr, True)
+        f = self._font
+        popup = tk.Toplevel(self.root)
+        popup.wm_overrideredirect(True); popup.attributes("-topmost", True)
+        outer = tk.Frame(popup, bg=BORDER2, padx=1, pady=1); outer.pack()
+        inner = tk.Frame(outer, bg=BG3); inner.pack()
+        _closed = [False]
+
+        def _close():
+            if _closed[0]: return
+            _closed[0] = True
+            setattr(self, flag_attr, False)
+            try: popup.destroy()
+            except Exception: pass
+
+        def _make_item(text, cmd):
+            row = tk.Frame(inner, bg=BG3, cursor="hand2"); row.pack(fill="x")
+            lbl = tk.Label(row, text=text, bg=BG3, fg=FG,
+                           font=(f, 10), anchor="w", padx=16, pady=8)
+            lbl.pack(fill="x")
+            def _enter(_): row.config(bg=BG4); lbl.config(bg=BG4, fg=ACCENT)
+            def _leave(_): row.config(bg=BG3); lbl.config(bg=BG3, fg=FG)
+            def _click(_):
+                _close(); self.root.update(); self.root.after(50, cmd)
+            for w_ in (row, lbl):
+                w_.bind("<Enter>", _enter); w_.bind("<Leave>", _leave)
+                w_.bind("<Button-1>", _click)
+
+        for text, cmd in items:
+            _make_item(text, cmd)
+
+        popup.update_idletasks()
+        bx = anchor_widget.winfo_rootx(); by = anchor_widget.winfo_rooty()
+        bh = anchor_widget.winfo_height()
+        popup.wm_geometry(f"+{bx}+{by + bh + 2}")
+
+        def _on_press_outside(event):
+            if _closed[0]: return
+            try:
+                wx = popup.winfo_rootx(); wy = popup.winfo_rooty()
+                ww = popup.winfo_width(); wh = popup.winfo_height()
+                if not (wx <= event.x_root <= wx + ww and wy <= event.y_root <= wy + wh):
+                    _close()
+            except Exception:
+                _close()
+
+        self.root.bind_all("<ButtonPress-1>", _on_press_outside, add=True)
+
+        def _poll():
+            if _closed[0]: return
+            try:
+                mx = self.root.winfo_pointerx(); my = self.root.winfo_pointery()
+                wx = popup.winfo_rootx(); wy = popup.winfo_rooty()
+                ww = popup.winfo_width(); wh = popup.winfo_height()
+                margin = 80
+                if not (wx-margin <= mx <= wx+ww+margin and wy-margin <= my <= wy+wh+margin):
+                    _close(); return
+                popup.after(150, _poll)
+            except Exception:
+                _close()
+
+        popup.after(300, _poll)
+
+        def _cleanup(_=None):
+            try: self.root.unbind_all("<ButtonPress-1>")
+            except Exception: pass
+            setattr(self, flag_attr, False)
+
+        popup.bind("<Destroy>", _cleanup)
+
+    def _install_menu(self):
+        self._make_dropdown(
+            self._install_btn_holder,
+            [("\u2191  Install Expert Advisor", self.install_ea),
+             ("\u2191  Install Indicator",       self.install_indicator)],
+            "_install_popup_open")
+
+    def _install_mt_menu(self):
+        self._make_dropdown(
+            self._install_mt_btn_holder,
+            [("\u2b07  Install MT",  self.install_mt),
+             ("\u2398  Duplikat MT", self.duplicate_mt)],
+            "_install_mt_popup_open")
+
+    # ── Install MT ────────────────────────────────────────────────────────────
+    def install_mt(self):
+        import threading
+        f  = self._font
+        fm = self._font_mono
+        win = tk.Toplevel(self.root); win.title("Install MetaTrader")
+        win.configure(bg=BG); win.resizable(False, False); win.attributes("-topmost", True)
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 270
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 130
+        win.geometry(f"540x260+{rx}+{ry}"); win.deiconify()
+        hdr = tk.Frame(win, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
+        tk.Label(hdr_inner, text="\u2b07  Install MetaTrader",
+                 bg=BG2, fg=FG, font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        body = tk.Frame(win, bg=BG, padx=24, pady=20); body.pack(fill="both", expand=True)
+        tk.Label(body, text="FILE INSTALLER (.EXE)",
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
+        file_row = tk.Frame(body, bg=BG); file_row.pack(fill="x", pady=(4,0))
+        installer_var = tk.StringVar(value="")
+        entry_border = tk.Frame(file_row, bg=BORDER2, padx=1, pady=1)
+        entry_border.pack(side="left", fill="x", expand=True, padx=(0,8))
+        installer_entry = tk.Entry(entry_border, textvariable=installer_var,
+            bg=BG3, fg=FG2, insertbackground=ACCENT, relief="flat",
+            font=(fm, 9), highlightthickness=0, state="readonly")
+        installer_entry.pack(fill="x", ipady=7, padx=1)
+
+        def _pick_file():
+            try: win.grab_release()
+            except Exception: pass
+            def _do_yad():
+                result = be.yad_pick_file(title="Pilih File Installer MT",
+                    filetypes=["*.exe"], start_dir=DOCS_DIR, root_widget=self.root)
+                def _back():
+                    if result:
+                        installer_var.set(result)
+                        entry_border.config(bg=ACCENT)
+                        win.after(200, lambda: entry_border.config(bg=BORDER2))
+                    try: win.grab_set()
+                    except Exception: pass
+                win.after(0, _back)
+            threading.Thread(target=_do_yad, daemon=True).start()
+
+        bh_, _ = make_pill_btn(file_row, "\u25a6 Browse", _pick_file,
+                               bg=BG3, fg=FG, hover_bg=BG4, font_size=10, padx=12, pady=7, radius=7)
+        bh_.pack(side="left")
+        status_var = tk.StringVar(value="")
+        status_lbl = tk.Label(body, textvariable=status_var, bg=BG, fg=FG3, font=(f, 9), anchor="w")
+        status_lbl.pack(fill="x", pady=(12,0))
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=14); fi.pack(fill="both", expand=True)
+
+        def _run_install():
+            path = installer_var.get().strip()
+            if not path:
+                status_var.set("\u26a0  Pilih file installer terlebih dahulu."); status_lbl.config(fg=WARN); return
+            if not Path(path).exists():
+                status_var.set("\u26a0  File tidak ditemukan."); status_lbl.config(fg=DANGER); return
+            win.destroy()
+            be.run_mt_installer_bg(
+                Path(path), 1, "",
+                on_progress=None,
+                on_finish=lambda done, qty, name, errs: self.root.after(0, lambda: (
+                    self._status(f"Install MT selesai: {done}/{qty} dari {name}"),
+                    self.root.after(800, lambda: self.scan_terminals(silent=True))
+                ))
+            )
+
+        run_h, _ = make_pill_btn(fi, "\u2b07  Mulai Install", _run_install,
+                                  bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
+                                  font_size=10, padx=20, pady=7, radius=7)
+        run_h.pack(side="right", pady=8, padx=(0,6))
+        cancel_h, _ = make_pill_btn(fi, "Batal", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+
+    # ── Duplicate MT ──────────────────────────────────────────────────────────
+    def duplicate_mt(self):
+        t = self._terminal(silent=False)
+        if not t:
+            return
+        f  = self._font
+        fm = self._font_mono
+        mt_type = t.get("type", "MT4")
+        if mt_type == "MT4":
+            src_root_str = t.get("install_path", "")
+            linux_base   = Path.home() / ".wine/drive_c/Program Files (x86)"
+        else:
+            src_root_str = t.get("path", "")
+            linux_base   = Path.home() / ".wine/drive_c/Program Files"
+
+        src_folder = None
+        if src_root_str:
+            candidate = Path(src_root_str)
+            if candidate.exists():
+                src_folder = candidate
+        if src_folder is None:
+            terminal_path = Path(t.get("path", ""))
+            for candidate in [terminal_path, terminal_path.parent]:
+                if candidate.exists() and candidate.is_dir():
+                    src_folder = candidate; break
+        if src_folder is None or not src_folder.exists():
+            themed_popup(self.root, "error", "Folder tidak ditemukan",
+                f"Folder instalasi MT tidak dapat ditemukan untuk terminal:\n{t['name']}")
+            return
+
+        base_name = src_folder.name
+        win = tk.Toplevel(self.root); win.title("Duplikat MT")
+        win.configure(bg=BG); win.resizable(False, False); win.attributes("-topmost", True)
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 270
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 170
+        win.geometry(f"540x340+{rx}+{ry}"); win.deiconify()
+
+        hdr = tk.Frame(win, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
+        tk.Label(hdr_inner, text="\u2398  Duplikat MetaTrader",
+                 bg=BG2, fg=FG, font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        body = tk.Frame(win, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
+        tk.Label(body, text="SUMBER", bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
+        src_border = tk.Frame(body, bg=BORDER2, padx=1, pady=1); src_border.pack(fill="x", pady=(4,14))
+        tk.Label(src_border, text=f"  {t['name']}  [{mt_type}]  \u2192  {src_folder}",
+                 bg=BG3, fg=FG2, font=(fm, 9), anchor="w").pack(fill="x", ipady=7, padx=1)
+        tk.Label(body, text="JUMLAH DUPLIKAT  (maks. 19)",
+                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
+
+        qty_row = tk.Frame(body, bg=BG); qty_row.pack(fill="x", pady=(4,6))
+        qty_var = tk.IntVar(value=1)
+        def _set_qty(v):
+            try: qty_var.set(max(1, min(19, int(v))))
+            except (ValueError, tk.TclError): pass
+        def _dec(): _set_qty(qty_var.get() - 1)
+        def _inc(): _set_qty(qty_var.get() + 1)
+
+        dec_h, _ = make_pill_btn(qty_row, "\u2212", _dec, bg=BG3, fg=FG, hover_bg=BG4,
+                                  font_size=12, padx=10, pady=6, radius=7)
+        dec_h.pack(side="left", padx=(0,6))
+        qty_border = tk.Frame(qty_row, bg=BORDER2, padx=1, pady=1); qty_border.pack(side="left", padx=(0,6))
+        qty_entry = tk.Entry(qty_border, textvariable=qty_var, bg=BG3, fg=FG,
+                             insertbackground=ACCENT, relief="flat", font=(f, 11, "bold"),
+                             width=4, justify="center", highlightthickness=0)
+        qty_entry.pack(ipady=6, padx=1)
+        qty_entry.bind("<FocusOut>", lambda _: _set_qty(qty_var.get()))
+        inc_h, _ = make_pill_btn(qty_row, "+", _inc, bg=BG3, fg=FG, hover_bg=BG4,
+                                  font_size=12, padx=10, pady=6, radius=7)
+        inc_h.pack(side="left")
+
+        hint_var = tk.StringVar(value="")
+        tk.Label(body, textvariable=hint_var, bg=BG, fg=FG3, font=(f, 10), anchor="w",
+                 wraplength=480).pack(fill="x", pady=(4,8))
+
+        def _update_hint(*_):
+            q = qty_var.get()
+            names = [f"{base_name} {n}" for n in range(2, 2 + q)]
+            preview = ", ".join(names[:3])
+            if q > 3: preview += ", \u2026"
+            hint_var.set(f"\u2192 folder: {preview}")
+
+        qty_var.trace_add("write", _update_hint); _update_hint()
+        status_var2 = tk.StringVar(value="")
+        tk.Label(body, textvariable=status_var2, bg=BG, fg=FG3, font=(f, 9), anchor="w").pack(fill="x")
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=14); fi.pack(fill="both", expand=True)
+
+        def _run_duplicate():
+            qty = qty_var.get(); win.destroy()
+            self._run_mt_duplicate(src_folder, base_name, linux_base, qty, mt_type)
+
+        run_h, _ = make_pill_btn(fi, "\u2398  Mulai Duplikat", _run_duplicate,
+                                  bg="#1a1400", fg=WARN, hover_bg="#2a2000",
+                                  font_size=10, padx=20, pady=7, radius=7)
+        run_h.pack(side="right", pady=8, padx=(0,6))
+        cancel_h, _ = make_pill_btn(fi, "Batal", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+
+    def _run_mt_duplicate(self, src_folder, base_name, linux_base, qty, mt_type):
+        f   = self._font
+        win = tk.Toplevel(self.root); win.title("Menduplikat MT")
+        win.configure(bg=BG); win.resizable(False, False); win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 240
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 120
+        win.geometry(f"480x240+{rx}+{ry}"); win.deiconify()
+        body = tk.Frame(win, bg=BG, padx=28, pady=20); body.pack(fill="both", expand=True)
+        icon_lbl  = tk.Label(body, text="\u2398", bg=BG, fg=WARN, font=(f, 22))
+        icon_lbl.grid(row=0, column=0, rowspan=3, padx=(0,16), sticky="n")
+        title_lbl = tk.Label(body, text="Memulai duplikat\u2026",
+                             bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w")
+        title_lbl.grid(row=0, column=1, sticky="w")
+        dir_var   = tk.StringVar(value="")
+        dir_lbl   = tk.Label(body, textvariable=dir_var, bg=BG, fg=FG3, font=(f, 8), anchor="w")
+        dir_lbl.grid(row=1, column=1, sticky="w", pady=(2,6))
+        prog_frame = tk.Frame(body, bg=BG); prog_frame.grid(row=2, column=1, sticky="ew")
+        body.columnconfigure(1, weight=1)
+        progress  = ProgressBar(prog_frame, height=3, bg=BG4, fill=WARN); progress.pack(fill="x")
+        count_var = tk.StringVar(value=f"0 / {qty}")
+        tk.Label(prog_frame, textvariable=count_var, bg=BG, fg=FG3, font=(f, 8)).pack(anchor="e", pady=(3,0))
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi   = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+        close_h, _ = make_pill_btn(fi, "Tutup", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                   font_size=9, padx=20, pady=6, radius=7)
+        _cancelled = [False]
+
+        def _do_cancel():
+            _cancelled[0] = True
+            icon_lbl.config(text="\u23f9", fg=WARN)
+            title_lbl.config(text="Duplikat dibatalkan.", fg=WARN)
+            dir_var.set(""); cancel_h.pack_forget(); close_h.pack(side="right", pady=8)
+
+        cancel_h, _ = make_pill_btn(fi, "\u2715  Cancel", _do_cancel,
+                                    bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8, padx=(0,6))
+
+        def _on_copy_progress(i, total, dst_name):
+            def _upd():
+                title_lbl.config(text=f"Menduplikat {i+1} dari {total}\u2026")
+                count_var.set(f"{i} / {total}")
+                progress.set((i / total) * 0.5 if total > 1 else 0.05)
+                dir_var.set(f"\u2192 {dst_name}")
+            win.after(0, _upd)
+
+        def _on_launch_progress(j, total, dst_name, exe_name):
+            def _upd():
+                title_lbl.config(text=f"Menjalankan MT {j+1} dari {total}\u2026")
+                count_var.set(f"{j+1} / {total}")
+                progress.set(0.5 + (j / max(total,1)) * 0.5)
+                dir_var.set(f"\u25b6 {dst_name}\\{exe_name}")
+            win.after(0, _upd)
+
+        def _on_finish(done_cnt, total, src_name, all_errors):
+            def _done():
+                if _cancelled[0]: return
+                progress.set(1.0); count_var.set(f"{done_cnt} / {total}"); dir_var.set("")
+                if all_errors:
+                    icon_lbl.config(text="\u26a0", fg=WARN)
+                    title_lbl.config(text=f"Selesai dengan {len(all_errors)} error.", fg=WARN)
+                    dir_lbl.config(text="\n".join(all_errors[:3]), fg=DANGER)
+                else:
+                    icon_lbl.config(text="\u2713", fg=WARN)
+                    title_lbl.config(text=f"{done_cnt} duplikat dibuat & dijalankan. \n Silakan Scan Metatrader", fg=FG)
+                    dir_lbl.config(text="Scan otomatis dijalankan.", fg=FG2)
+                cancel_h.pack_forget(); close_h.pack(side="right", pady=8)
+                self._status(f"Duplikat MT selesai: {done_cnt}/{total} dari {src_name}")
+                self.root.after(800, lambda: self.scan_terminals(silent=True))
+            win.after(0, _done)
+
+        be.run_mt_duplicate_bg(src_folder, base_name, linux_base, qty, mt_type,
+                               _on_copy_progress, _on_launch_progress,
+                               _on_finish, _cancelled)
+
+    # ── Update ────────────────────────────────────────────────────────────────
+    def _show_update_popup(self, update_sh):
+        f   = self._font
+        win = tk.Toplevel(self.root); win.title("Update")
+        win.configure(bg=BG); win.geometry("420x180"); win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 210
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 90
+        win.geometry(f"420x180+{rx}+{ry}"); win.deiconify(); win.update()
+        try: win.grab_set()
+        except Exception: pass
+
+        body = tk.Frame(win, bg=BG, padx=28, pady=24); body.pack(fill="both", expand=True)
+        icon_lbl = tk.Label(body, text="\u21ba", bg=BG, fg=ACCENT, font=(f, 22))
+        icon_lbl.grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
+        msg_var = tk.StringVar(value="Memeriksa update...")
+        msg_lbl = tk.Label(body, textvariable=msg_var, bg=BG, fg=FG,
+                           font=(f, 11, "bold"), anchor="w", justify="left")
+        msg_lbl.grid(row=0, column=1, sticky="w")
+        sub_var = tk.StringVar(value="")
+        tk.Label(body, textvariable=sub_var, bg=BG, fg=FG2,
+                 font=(f, 9), anchor="w", justify="left").grid(row=1, column=1, sticky="w", pady=(4,0))
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
+        foot_inner = tk.Frame(foot, bg=BG2, padx=12); foot_inner.pack(fill="both", expand=True)
+
+        ok_h, _ = make_pill_btn(foot_inner, "OK", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                 font_size=9, padx=20, pady=6, radius=7)
+
+        def _restart():
+            win.destroy()
+            import sys, os
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        restart_h, _ = make_pill_btn(foot_inner, "\u21bb  Restart Aplikasi", _restart,
+                                      bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
+                                      font_size=9, padx=20, pady=6, radius=7)
+
+        def _on_done(already_updated):
+            if already_updated:
+                icon_lbl.config(text="\u2713", fg=ACCENT3)
+                msg_var.set("Aplikasi sudah up-to-date."); sub_var.set("Tidak ada perubahan baru.")
+                ok_h.pack(side="right", pady=8)
+            else:
+                icon_lbl.config(text="\u2713", fg=ACCENT3)
+                msg_var.set("Update berhasil!")
+                sub_var.set("Restart aplikasi untuk menerapkan perubahan.")
+                restart_h.pack(side="right", pady=8, padx=(0,6)); ok_h.pack(side="right", pady=8)
+
+        def _on_fail(msg):
+            icon_lbl.config(text="\u2717", fg=DANGER)
+            msg_var.set("Update gagal."); sub_var.set(msg[:72]); ok_h.pack(side="right", pady=8)
+
+        be.run_update_bg(update_sh,
+                         on_done=lambda au: win.after(0, lambda: _on_done(au)),
+                         on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
+
+    def _auto_update_check(self):
+        update_sh = Path.home() / "vfx2" / "update.sh"
+        if not update_sh.exists():
+            return
+        self._status("Memeriksa update otomatis\u2026")
+
+        def _on_new():
+            self.root.after(0, lambda: self._show_auto_update_result(True))
+
+        def _on_current():
+            self.root.after(0, lambda: self._status("Aplikasi sudah up-to-date."))
+
+        def _on_err(msg):
+            self.root.after(0, lambda m=msg: self._status(m))
+
+        be.run_auto_update_bg(update_sh, _on_new, _on_current, _on_err)
+
+    def _show_auto_update_result(self, has_update: bool):
+        if not has_update:
+            return
+        f   = self._font
+        win = tk.Toplevel(self.root); win.title("Update Tersedia")
+        win.configure(bg=BG); win.geometry("400x160"); win.resizable(False, False)
+        win.attributes("-topmost", True); win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 200
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 80
+        win.geometry(f"400x160+{rx}+{ry}"); win.deiconify(); win.lift(); win.focus_force()
+
+        body = tk.Frame(win, bg=BG, padx=28, pady=20); body.pack(fill="both", expand=True)
+        tk.Label(body, text="\u21ba", bg=BG, fg=ACCENT3,
+                 font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
+        tk.Label(body, text="Update berhasil dipasang!",
+                 bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+        tk.Label(body, text="Restart aplikasi untuk menerapkan perubahan.",
+                 bg=BG, fg=FG2, font=(f, 9), anchor="w").grid(row=1, column=1, sticky="w", pady=(4,0))
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+
+        def _restart():
+            win.destroy()
+            import sys, os
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        r_h, _ = make_pill_btn(fi, "\u21bb  Restart Aplikasi", _restart,
+                               bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
+                               font_size=9, padx=20, pady=6, radius=7)
+        r_h.pack(side="right", pady=8, padx=(0,6))
+        ok_h, _ = make_pill_btn(fi, "Nanti", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                 font_size=9, padx=20, pady=6, radius=7)
+        ok_h.pack(side="right", pady=8)
+        self._status("Update baru tersedia \u2014 restart untuk menerapkan.")
+
+    # ── Autostart canvas ──────────────────────────────────────────────────────
+    def _draw_as_canvas(self):
+        if getattr(self, "_as_draw_id", None):
+            self._as_canvas.after_cancel(self._as_draw_id)
+        self._as_draw_id = self._as_canvas.after(8, self._do_draw_as_canvas)
+
+    def _do_draw_as_canvas(self):
+        self._as_draw_id = None
+        c  = self._as_canvas
+        cw = c.winfo_width(); ch = c.winfo_height()
+        if cw < 4 or ch < 4:
+            return
+        c.delete("all")
+        rh      = 44
+        iid_map = getattr(self, "_iid_to_terminal", {})
+        all_rows = getattr(self, "_all_term_rows", None) or self.term_tree.get_children()
+        if not all_rows:
+            return
+        yview         = self.term_tree.yview()
+        scroll_offset = int(yview[0] * len(all_rows) * rh)
+        cx = cw // 2; tw = AS_TRACK_W; th = AS_TRACK_H
+        tr = th >> 1; thumb_r = AS_THUMB_R
+        hover = getattr(self, "_as_hover_iid", None)
+        tx1 = cx - (tw >> 1); tx2 = cx + (tw >> 1)
+        as_cache = self._as_state_cache
+
+        for idx, iid in enumerate(all_rows):
+            if iid not in iid_map:
+                continue
+            y_center = idx * rh + (rh >> 1) - scroll_offset
+            if y_center < -rh or y_center > ch + rh:
+                continue
+            on = as_cache.get(iid)
+            if on is None:
+                on = be.autostart_is_on(iid_map[iid])
+                as_cache[iid] = on
+            is_hover  = (iid == hover)
+            ty1 = y_center - (th >> 1); ty2 = y_center + (th >> 1)
+            track_col = AS_COLOR_ON if on else AS_COLOR_OFF
+            if is_hover:
+                track_col = "#00e6ac" if on else "#3a5570"
+            r   = tr
+            pts = [tx1+r,ty1, tx2-r,ty1, tx2,ty1, tx2,ty1+r,
+                   tx2,ty2-r, tx2,ty2, tx2-r,ty2, tx1+r,ty2,
+                   tx1,ty2, tx1,ty2-r, tx1,ty1+r, tx1,ty1, tx1+r,ty1]
+            c.create_polygon(pts, smooth=True, fill=track_col, outline="")
+            thumb_cx = (tx2 - r) if on else (tx1 + r)
+            c.create_oval(thumb_cx - thumb_r, y_center - thumb_r,
+                          thumb_cx + thumb_r, y_center + thumb_r,
+                          fill=AS_THUMB_COL, outline="")
+
+    def _as_y_to_iid(self, y: int):
+        rh       = 44
+        all_rows = getattr(self, "_all_term_rows", None) or self.term_tree.get_children()
+        if not all_rows:
+            return None
+        yview         = self.term_tree.yview()
+        scroll_offset = int(yview[0] * len(all_rows) * rh)
+        idx = (y + scroll_offset) // rh
+        if idx < 0 or idx >= len(all_rows):
+            return None
+        iid = all_rows[idx]
+        return iid if iid in getattr(self, "_iid_to_terminal", {}) else None
+
+    def _on_as_click(self, event):
+        iid = self._as_y_to_iid(event.y)
+        if iid is None:
+            return
+        t         = self._iid_to_terminal[iid]
+        new_state = not be.autostart_is_on(t)
+        ok        = be.autostart_set(t, new_state,
+                       lambda t_: be.find_exe(t_, "terminal.exe", "terminal64.exe"))
+        if new_state and not ok:
+            themed_popup(self.root, "error", "Autostart Gagal",
+                f"File terminal.exe / terminal64.exe tidak ditemukan\n"
+                f"untuk {t['name']} ({t['type']}).\n\nAutostart tidak dapat dibuat.")
+            return
+        self._as_state_cache[iid] = new_state
+        self._draw_as_canvas()
+        self._status(f"Autostart {t['name']} \u2192 {'ON' if new_state else 'OFF'}")
+
+    def _on_as_motion(self, event):
+        iid = self._as_y_to_iid(event.y)
+        if iid != self._as_hover_iid:
+            self._as_hover_iid = iid
+            self._draw_as_canvas()
+            self._as_cancel_tooltip()
+            if iid is not None:
+                self._as_tooltip_id = self._as_canvas.after(
+                    280, lambda: self._as_show_tooltip(event.x_root, event.y_root))
+
+    def _on_as_leave(self, _=None):
+        if self._as_hover_iid is not None:
+            self._as_hover_iid = None
+            self._draw_as_canvas()
+        self._as_cancel_tooltip()
+
+    def _as_cancel_tooltip(self):
+        if self._as_tooltip_id:
+            self._as_canvas.after_cancel(self._as_tooltip_id)
+            self._as_tooltip_id = None
+        if self._as_tooltip_win:
+            try: self._as_tooltip_win.destroy()
+            except Exception: pass
+            self._as_tooltip_win = None
+
+    def _as_show_tooltip(self, rx, ry):
+        if self._as_tooltip_win:
+            return
+        tw = tk.Toplevel(self.root); tw.wm_overrideredirect(True)
+        tw.configure(bg=BORDER2); tw.attributes("-topmost", True)
+        outer = tk.Frame(tw, bg=BORDER2, padx=1, pady=1); outer.pack()
+        inner = tk.Frame(outer, bg=BG3, padx=12, pady=7); inner.pack()
+        tk.Label(inner, text="Aktifkan/Nonaktifkan autostart MT saat VPS restart",
+                 bg=BG3, fg=FG2, font=(self._font, 9), wraplength=260, justify="left").pack()
+        tw.update_idletasks()
+        tw_ = tw.winfo_reqwidth(); th_ = tw.winfo_reqheight()
+        x = rx + 14; y = ry + 18
+        sw = tw.winfo_screenwidth(); sh = tw.winfo_screenheight()
+        if x + tw_ > sw: x = rx - tw_ - 6
+        if y + th_ > sh: y = ry - th_ - 6
+        tw.wm_geometry(f"+{x}+{y}")
+        self._as_tooltip_win = tw
+
+    def _autostart_sync_poll(self):
+        iid_map = getattr(self, "_iid_to_terminal", {})
+        changed = False
+        for iid, was_on in list(self._as_state_cache.items()):
+            if not was_on:
+                continue
+            t = iid_map.get(iid)
+            if t is None:
+                continue
+            now_on = be.autostart_is_on(t)
+            if now_on != was_on:
+                self._as_state_cache[iid] = now_on
+                changed = True
+        if changed:
+            self._draw_as_canvas()
+        self.root.after(2000, self._autostart_sync_poll)
+
+    # ── Scan terminals ────────────────────────────────────────────────────────
+    def scan_terminals(self, silent=False):
+        self.term_tree.delete(*self.term_tree.get_children())
+        self.file_tree.delete(*self.file_tree.get_children())
+        self.terminals.clear()
+        self._as_state_cache.clear()
+        self._last_selected_path = None
+        self._status("Memindai terminal\u2026")
+
+        def _on_result(found):
+            self.root.after(0, lambda: self._apply_scan(found, silent))
+
+        be.scan_terminals_bg(_on_result)
+
+    def _apply_scan(self, found, silent):
+        self.terminals.clear(); self.terminals.extend(found)
+        self.term_tree.delete(*self.term_tree.get_children())
+        self._iid_to_terminal = {}
+        cur_type = None
+        for item in found:
+            if item["type"] != cur_type:
+                cur_type = item["type"]
+                label = f"METATRADER {'4' if cur_type == 'MT4' else '5'}"
+                self.term_tree.insert("", "end",
+                    values=("", label, ""), tags=("group",))
+            iid = self.term_tree.insert("", "end",
+                values=(item["type"], item["name"], item["type"]),
+                tags=(item["type"],))
+            self._iid_to_terminal[iid] = item
+
+        self._all_term_rows = self.term_tree.get_children()
+        self.root.after(50, self._draw_as_canvas)
+
+        n = len(found)
+        if hasattr(self, "_term_count_var"):
+            self._term_count_var.set(f"{n} terminal terdeteksi")
+        self._status(f"{n} terminal ditemukan.")
+
+        if not silent:
+            self._show_scan_result(found)
+
+    def _show_scan_result(self, found):
+        f  = self._font
+        mt4_count = sum(1 for t in found if t["type"] == "MT4")
+        mt5_count = sum(1 for t in found if t["type"] == "MT5")
+        n = len(found)
+
+        dlg = tk.Toplevel(self.root); dlg.title("Scan Selesai")
+        dlg.configure(bg=BG); dlg.resizable(False, False); dlg.attributes("-topmost", True)
+        hdr = tk.Frame(dlg, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
+        tk.Label(hdr_inner, text="\u2713  Scan Selesai",
+                 bg=BG2, fg="#5ecf3e", font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+        body = tk.Frame(dlg, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
+        tk.Label(body, text="\u2713", bg=BG, fg="#5ecf3e",
+                 font=(f, 22)).grid(row=0, column=0, rowspan=3, padx=(0,16), sticky="n")
+        tk.Label(body, text=f"Ditemukan {n} terminal MetaTrader.",
+                 bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+        info_box = tk.Frame(body, bg=BG3, padx=14, pady=10)
+        info_box.grid(row=1, column=1, sticky="ew", pady=(10,0))
+        body.columnconfigure(1, weight=1)
+        for lbl, val, clr in [("MetaTrader 4", f"{mt4_count} terminal", ACCENT),
+                               ("MetaTrader 5", f"{mt5_count} terminal", ACCENT),
+                               ("Total",        f"{n} terminal",         FG)]:
+            row = tk.Frame(info_box, bg=BG3); row.pack(fill="x", pady=2)
+            tk.Label(row, text=f"{lbl:<14}", bg=BG3, fg=FG3,
+                     font=(f, 9), anchor="w", width=14).pack(side="left")
+            tk.Label(row, text=val, bg=BG3, fg=clr,
+                     font=(f, 9, "bold"), anchor="w").pack(side="left")
+        if found:
+            tk.Frame(info_box, bg=BORDER, height=1).pack(fill="x", pady=(8,6))
+            for t in found[:8]:
+                tk.Label(info_box, text=f"  {t['type']}  {t['name']}",
+                         bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
+            if len(found) > 8:
+                tk.Label(info_box, text=f"  \u2026 dan {len(found)-8} lainnya",
+                         bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
+        tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(dlg, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+        oh, _ = make_pill_btn(fi, "OK", dlg.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                              font_size=9, padx=20, pady=6, radius=7)
+        oh.pack(side="right", pady=8)
+        dlg.update_idletasks(); self._center_win(dlg); dlg.deiconify(); dlg.lift(); dlg.focus_force()
+
+    # ── Utility ───────────────────────────────────────────────────────────────
+    def _center_win(self, win):
+        """Pusatkan window relatif terhadap root."""
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - win.winfo_reqwidth()  // 2
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - win.winfo_reqheight() // 2
+        win.geometry(f"+{rx}+{ry}")
