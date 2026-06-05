@@ -168,7 +168,7 @@ def yad_pick_file(title: str, filetypes: list[str], start_dir: Path,
 
 
 # ── Themed popup helper (message-only, non-GUI) ────────────────────────────────
-# Actual popup dibuat di ui.py; ini hanya data model.
+# Actual popup dibuat di frontend.py; ini hanya data model.
 POPUP_ICONS = {
     "success": ("\u2713", "#5ecf3e"),
     "error":   ("\u2717", DANGER),

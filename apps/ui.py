@@ -1,5 +1,5 @@
 """
-frontend.py — MT Manager
+ui.py — MT Manager
 Kelas MTManager: membangun UI tkinter dan menangani event.
 Semua logika bisnis didelegasikan ke system.py.
 Semua widget custom diimport dari widgets.py.
@@ -48,6 +48,10 @@ class MTManager:
         self._all_term_rows         = ()
         self._select_after_id       = None
         self._last_selected_path    = None
+
+        # Clipboard: list of (src_path, fname, cat) + mode "copy"|"cut"
+        self._clipboard: list       = []
+        self._clipboard_mode: str   = ""   # "copy" | "cut"
 
         self._build_styles()
         self._build_ui()
@@ -310,6 +314,7 @@ class MTManager:
         self.chk_tree.tag_configure("row_even", background=BG3)
         self.chk_tree.tag_configure("row_odd",  background=BG4)
         self.chk_tree.tag_configure("checked",  background=ACCENT_DIM)
+        self.chk_tree.tag_configure("cut_dim",  foreground=FG3)
 
         self.cat_tree = ttk.Treeview(tbl_box.inner, columns=("cat",), show="headings",
                                       selectmode="browse", style="Cat.Treeview",
@@ -323,6 +328,7 @@ class MTManager:
         self.cat_tree.tag_configure("row_even", background=BG3)
         self.cat_tree.tag_configure("row_odd",  background=BG4)
         self.cat_tree.tag_configure("checked",  background=ACCENT_DIM)
+        self.cat_tree.tag_configure("cut_dim",  foreground=FG3)
 
         self.file_tree = ttk.Treeview(tbl_box.inner,
                                        columns=("name", "type", "size", "modified"),
@@ -337,6 +343,7 @@ class MTManager:
         self.file_tree.tag_configure("row_even", background=BG3)
         self.file_tree.tag_configure("row_odd",  background=BG4)
         self.file_tree.tag_configure("checked",  background=ACCENT_DIM)
+        self.file_tree.tag_configure("cut_dim",  foreground=FG3)   # dimmed saat Cut
 
         def _kill_borders():
             for tree in (self.chk_tree, self.cat_tree):
@@ -353,6 +360,10 @@ class MTManager:
         self.chk_tree.bind("<ButtonRelease-1>", self._on_chk_click)
         self.cat_tree.bind("<ButtonRelease-1>",  self._on_file_click)
         self.file_tree.bind("<ButtonRelease-1>", self._on_file_click)
+
+        # Klik kanan → context menu Copy/Cut/Paste/Delete
+        for tree in (self.chk_tree, self.cat_tree, self.file_tree):
+            tree.bind("<Button-3>", self._on_file_right_click)
 
         # ── WGET PANEL ──
         self._wget_anchor = tk.Frame(content_main, bg=BG, height=1)
@@ -742,6 +753,279 @@ class MTManager:
     def _folder_for(self, t, label):
         return t.get({"Expert":"experts","Indicator":"indicators",
                       "Script":"scripts","Log":"logs"}.get(label, "experts"))
+
+    # ── Context Menu (klik kanan tabel file) ──────────────────────────────────
+    def _on_file_right_click(self, event):
+        """Tampilkan context menu Copy/Cut/Paste/Delete saat klik kanan di tabel."""
+        # Seleksi baris yang diklik
+        widget = event.widget
+        iid    = widget.identify_row(event.y)
+        if iid:
+            self.chk_tree.selection_set(iid)
+            self.cat_tree.selection_set(iid)
+            self.file_tree.selection_set(iid)
+
+        t = self._terminal(silent=True)
+        f = self._font
+
+        # Kumpulkan target: prioritaskan checked, fallback ke baris terpilih
+        targets = self._get_checked_targets(t) or self._get_selected_target(t)
+
+        has_targets     = bool(targets)
+        has_clipboard   = bool(self._clipboard)
+        paste_label     = ""
+        if has_clipboard:
+            mode_lbl  = "Cut" if self._clipboard_mode == "cut" else "Copy"
+            n         = len(self._clipboard)
+            paste_lbl = f"Paste ({mode_lbl} {n} file)"
+        else:
+            paste_lbl = "Paste"
+
+        popup = tk.Toplevel(self.root)
+        popup.wm_overrideredirect(True)
+        popup.attributes("-topmost", True)
+
+        outer = tk.Frame(popup, bg=BORDER2, padx=1, pady=1)
+        outer.pack()
+        inner = tk.Frame(outer, bg=BG3)
+        inner.pack(fill="x")
+
+        _closed = [False]
+
+        def _close():
+            if _closed[0]: return
+            _closed[0] = True
+            try: popup.destroy()
+            except Exception: pass
+
+        def _sep():
+            tk.Frame(inner, bg=BORDER, height=1).pack(fill="x", padx=8, pady=2)
+
+        def _item(icon, label, cmd, fg_color=FG, enabled=True):
+            row = tk.Frame(inner, bg=BG3, cursor="hand2" if enabled else "arrow")
+            row.pack(fill="x")
+            color = fg_color if enabled else FG3
+            lbl   = tk.Label(row, text=f"  {icon}  {label}", bg=BG3, fg=color,
+                             font=(f, 10), anchor="w", padx=8, pady=7)
+            lbl.pack(fill="x")
+            if enabled:
+                def _enter(_): row.config(bg=BG4); lbl.config(bg=BG4)
+                def _leave(_): row.config(bg=BG3); lbl.config(bg=BG3)
+                def _click(_):
+                    _close()
+                    self.root.after(10, cmd)
+                for w_ in (row, lbl):
+                    w_.bind("<Enter>",    _enter)
+                    w_.bind("<Leave>",    _leave)
+                    w_.bind("<Button-1>", _click)
+
+        # ── Menu items ──
+        n_sel = len(targets) if targets else 0
+        sel_suffix = f" ({n_sel} file)" if n_sel > 1 else ""
+
+        _item("\u29c9", f"Copy{sel_suffix}",
+              lambda: self._clipboard_copy(targets),
+              fg_color=ACCENT, enabled=has_targets)
+
+        _item("\u2702", f"Cut{sel_suffix}",
+              lambda: self._clipboard_cut(targets),
+              fg_color=WARN, enabled=has_targets)
+
+        _sep()
+
+        _item("\u2398", paste_lbl,
+              self._clipboard_paste,
+              fg_color=ACCENT3, enabled=has_clipboard and t is not None)
+
+        _sep()
+
+        _item("\u232b", f"Delete{sel_suffix}",
+              self.uninstall_file,
+              fg_color=DANGER, enabled=has_targets)
+
+        # Posisi popup di dekat kursor
+        popup.update_idletasks()
+        pw = popup.winfo_reqwidth()
+        ph = popup.winfo_reqheight()
+        sx, sy = event.x_root, event.y_root
+        sw = popup.winfo_screenwidth()
+        sh = popup.winfo_screenheight()
+        if sx + pw > sw: sx = sw - pw - 4
+        if sy + ph > sh: sy = sy - ph - 4
+        popup.wm_geometry(f"+{sx}+{sy}")
+
+        # Tutup saat klik di luar
+        def _on_outside(e):
+            if _closed[0]: return
+            try:
+                wx, wy = popup.winfo_rootx(), popup.winfo_rooty()
+                ww, wh = popup.winfo_width(), popup.winfo_height()
+                if not (wx <= e.x_root <= wx + ww and wy <= e.y_root <= wy + wh):
+                    _close()
+            except Exception:
+                _close()
+
+        popup.bind("<FocusOut>", lambda e: _close())
+        self.root.bind_all("<ButtonPress-1>", _on_outside, add=True)
+        popup.bind("<Destroy>", lambda e: self.root.unbind_all("<ButtonPress-1>"))
+        popup.focus_set()
+
+    def _get_checked_targets(self, t):
+        """Return list (src_path, fname, cat) dari baris yang di-centang."""
+        if not t or not self._checked:
+            return []
+        targets = []
+        for iid in list(self._checked):
+            try:
+                fname = self.file_tree.item(iid, "values")[0]
+                cat   = self.cat_tree.item(iid, "values")[0]
+                src   = self._folder_for(t, cat) / fname
+                if src.exists():
+                    targets.append((src, fname, cat))
+            except Exception:
+                pass
+        return targets
+
+    def _get_selected_target(self, t):
+        """Return list (src_path, fname, cat) dari baris yang terpilih (single)."""
+        if not t:
+            return []
+        cat, fname = self._file_info()
+        if not fname:
+            return []
+        src = self._folder_for(t, cat) / fname
+        if not src.exists():
+            return []
+        return [(src, fname, cat)]
+
+    def _clipboard_copy(self, targets):
+        if not targets:
+            return
+        self._clipboard      = targets
+        self._clipboard_mode = "copy"
+        n = len(targets)
+        self._status(f"\u29c9 {n} file disalin ke clipboard.")
+
+    def _clipboard_cut(self, targets):
+        if not targets:
+            return
+        self._clipboard      = targets
+        self._clipboard_mode = "cut"
+        n = len(targets)
+        # Tandai baris sebagai "cut" (dimmed) dengan tag
+        for _, fname, _ in targets:
+            for iid in self.file_tree.get_children():
+                if self.file_tree.item(iid, "values")[0] == fname:
+                    for tree in (self.chk_tree, self.cat_tree, self.file_tree):
+                        cur = list(tree.item(iid, "tags"))
+                        if "cut_dim" not in cur:
+                            tree.item(iid, tags=(*cur, "cut_dim"))
+        self._status(f"\u2702 {n} file siap dipindah (Cut).")
+
+    def _clipboard_paste(self):
+        """Paste file clipboard ke folder kategori yang sesuai di terminal aktif."""
+        if not self._clipboard:
+            return
+        t = self._terminal()
+        if not t:
+            return
+        f  = self._font
+        fm = self._font_mono
+
+        items   = self._clipboard
+        mode    = self._clipboard_mode
+        errors  = []
+        done    = 0
+        skipped = []
+
+        for src_path, fname, cat in items:
+            dst_folder = self._folder_for(t, cat)
+            if dst_folder is None:
+                errors.append(f"{fname}: kategori '{cat}' tidak dikenal"); continue
+            dst_folder.mkdir(parents=True, exist_ok=True)
+            dst = dst_folder / fname
+
+            # Cegah paste ke folder yang sama
+            if src_path.parent == dst_folder:
+                skipped.append(fname); continue
+
+            # Jika sudah ada, beri suffix angka
+            if dst.exists():
+                stem = dst.stem; suffix_ = dst.suffix; counter = 2
+                while dst.exists():
+                    dst = dst_folder / f"{stem} ({counter}){suffix_}"
+                    counter += 1
+
+            try:
+                if mode == "cut":
+                    shutil.move(str(src_path), str(dst))
+                else:
+                    shutil.copy2(str(src_path), str(dst))
+                done += 1
+            except Exception as e:
+                errors.append(f"{fname}: {e}")
+
+        # Bersihkan clipboard jika Cut
+        if mode == "cut":
+            self._clipboard      = []
+            self._clipboard_mode = ""
+
+        self._reload_files(t)
+
+        # Status
+        parts = []
+        if done:    parts.append(f"{done} file {'dipindah' if mode == 'cut' else 'disalin'}")
+        if skipped: parts.append(f"{len(skipped)} dilewati (folder sama)")
+        if errors:  parts.append(f"{len(errors)} gagal")
+        self._status(" · ".join(parts) + f" \u2192 {t['name']}")
+
+        # Popup hasil
+        if errors or done:
+            self._popup_paste_result(done, mode, t["name"], skipped, errors)
+
+    def _popup_paste_result(self, done, mode, terminal_name, skipped, errors):
+        f   = self._font
+        fm  = self._font_mono
+        ok  = not errors
+        icon_ch = "\u2713" if ok else "\u26a0"
+        icon_fg = "#5ecf3e" if ok else WARN
+        action  = "dipindah" if mode == "cut" else "disalin"
+
+        res = tk.Toplevel(self.root)
+        res.title("Paste Selesai"); res.configure(bg=BG)
+        res.resizable(False, False); res.attributes("-topmost", True)
+
+        hdr = tk.Frame(res, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
+        hdr_i = tk.Frame(hdr, bg=BG2, padx=20); hdr_i.pack(fill="both", expand=True)
+        tk.Label(hdr_i, text=f"{icon_ch}  Paste Selesai",
+                 bg=BG2, fg=icon_fg, font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+
+        body = tk.Frame(res, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
+        tk.Label(body, text=icon_ch, bg=BG, fg=icon_fg,
+                 font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0, 16), sticky="n")
+        tk.Label(body, text=f"{done} file berhasil {action}.",
+                 bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+        detail_lines = []
+        if skipped:
+            detail_lines.append(f"\u2014 {len(skipped)} dilewati (folder sumber = tujuan)")
+        if errors:
+            detail_lines += [f"\u2717 {e}" for e in errors[:4]]
+        if detail_lines:
+            tk.Label(body, text="\n".join(detail_lines), bg=BG,
+                     fg=FG2 if not errors else DANGER,
+                     font=(fm, 8), anchor="w", justify="left",
+                     wraplength=360).grid(row=1, column=1, sticky="w", pady=(4, 0))
+        body.columnconfigure(1, weight=1)
+
+        tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(res, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi   = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+        oh, _ = make_pill_btn(fi, "OK", res.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                              font_size=9, padx=20, pady=6, radius=7)
+        oh.pack(side="right", pady=8)
+        res.update_idletasks(); self._center_win(res)
+        res.deiconify(); res.lift(); res.focus_force()
 
     # ── Install EA/Indicator ──────────────────────────────────────────────────
     def _install(self, key, label):
@@ -1835,6 +2119,9 @@ class MTManager:
         self.terminals.clear()
         self._as_state_cache.clear()
         self._last_selected_path = None
+        # Bersihkan clipboard agar tidak ada referensi path lama
+        self._clipboard      = []
+        self._clipboard_mode = ""
         self._status("Memindai terminal\u2026")
 
         def _on_result(found):
