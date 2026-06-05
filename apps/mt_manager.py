@@ -8,19 +8,25 @@ from pathlib import Path
 import tkinter as tk
 import tkinter.font as tkf
 from tkinter import ttk, messagebox
+__version__ = "1.3"
 
-# ── Import backend (logika non-UI) ────────────────────────────────────────────
-from mt_backend import (
-    __version__,
-    _load_config, _save_config,
-    ALLOWED_ROOT, DOCS_DIR, AUTOSTART_DIR, EXTRACT_EXTS,
-    extract_file, is_archive,
-    _detect_installer_type, _try_silent_install, _silent_succeeded,
-    _parse_origin, scan_worker,
-    _autostart_desktop_path, _autostart_is_on, _autostart_icon_path,
-    _find_exe as _bk_find_exe,
-    list_terminal_files,
-)
+# ── Config file (persist settings antar sesi) ─────────────────────────────────
+CONFIG_PATH = Path.home() / ".config" / "mt_manager" / "settings.json"
+
+def _load_config() -> dict:
+    try:
+        if CONFIG_PATH.exists():
+            return json.loads(CONFIG_PATH.read_text())
+    except Exception:
+        pass
+    return {}
+
+def _save_config(data: dict):
+    try:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(json.dumps(data, indent=2))
+    except Exception:
+        pass
 
 # ── Design Tokens — sesuai HTML metatrader_manager_ui.html ────────────────────
 BG          = "#0d1114"   # --bg
@@ -45,7 +51,8 @@ PURPLE      = "#a78bfa"
 
 # (legacy colour aliases removed)
 
-# ALLOWED_ROOT, DOCS_DIR, EXTRACT_EXTS → diimport dari mt_backend
+ALLOWED_ROOT = Path.home()
+DOCS_DIR     = Path.home() / "Documents"
 
 # ── Table Text Config ─────────────────────────────────────────────────────────
 TABLE_FONT_SIZE    = 10        # ukuran font isi tabel
@@ -69,7 +76,7 @@ CAT_COLORS = {
 }
 
 # ── Autostart Toggle Config ───────────────────────────────────────────────────
-# AUTOSTART_DIR → diimport dari mt_backend
+AUTOSTART_DIR    = Path.home() / ".config" / "autostart"
 # Slider dimensions
 AS_COL_WIDTH     = 48              # lebar kolom canvas slider (px)
 AS_TRACK_W       = 34              # lebar pill track
@@ -92,7 +99,8 @@ CHK_CHAR_ON   = "\u25a0"            # karakter checkbox terisi
 # Kedua Treeview pakai row height yang sama agar baris tetap sejajar.
 TABLE_ROW_HEIGHT   = 0         # 0 = auto; atau set manual mis. 32
 
-# EXTRACT_EXTS → diimport dari mt_backend
+EXTRACT_EXTS = {".zip", ".rar", ".tar", ".gz", ".bz2", ".xz", ".7z",
+                ".tar.gz", ".tar.bz2", ".tar.xz"}
 
 # Font: JetBrains Mono dengan fallback DejaVu Sans Mono
 FONT        = "San Francisco"
@@ -563,7 +571,19 @@ def yad_pick_file(title="Pilih File", filetypes=None, start_dir=None,
         return None
 
 
-# extract_file, is_archive → diimport dari mt_backend
+def extract_file(filepath: Path, dest_dir: Path) -> tuple[bool, str]:
+    if not shutil.which("xarchiver"):
+        return False, "xarchiver tidak terinstall. Jalankan: sudo apt install xarchiver"
+    try:
+        subprocess.Popen(["xarchiver", "--extract-to", str(dest_dir), str(filepath)])
+        return True, "xarchiver dibuka."
+    except Exception as e:
+        return False, str(e)
+
+
+def is_archive(path: Path) -> bool:
+    n = path.name.lower()
+    return any(n.endswith(ext) for ext in EXTRACT_EXTS)
 
 
 # ── Canvas pill button (like HTML .btn) ────────────────────────────────────────
@@ -689,6 +709,8 @@ class MTManager:
         self._build_styles()
         self._build_ui()
         self.scan_terminals(silent=True)   # startup: tanpa popup "Scan Selesai"
+        # Sinkronisasi autostart: poll filesystem setiap 2 detik
+        self.root.after(2000, self._autostart_sync_poll)
         # Auto-update: jalankan di background setelah UI siap
         if self.auto_update_var.get():
             self.root.after(800, self._auto_update_check)
@@ -1581,8 +1603,19 @@ class MTManager:
 
     # ── Shared helpers: resolve exe path & wine launcher ─────────────────────
     def _find_exe(self, t: dict, mt4_name: str, mt5_name: str):
-        """Wrapper ke backend _find_exe."""
-        return _bk_find_exe(t, mt4_name, mt5_name)
+        """Cari file exe untuk terminal t.  MT4 pakai install_path, MT5 pakai path langsung."""
+        tp = Path(t["path"])
+        if t["type"] == "MT5":
+            c = tp / mt5_name
+            return c if c.exists() else None
+        # MT4
+        ip = t.get("install_path")
+        if ip:
+            c = Path(ip) / mt4_name
+            if c.exists():
+                return c
+        c = tp / mt4_name   # fallback AppData
+        return c if c.exists() else None
 
     def _wine_launch(self, exe_path, label: str):
         """Jalankan exe_path via wine di background thread."""
@@ -1893,7 +1926,104 @@ class MTManager:
                                     font_size=9, padx=20, pady=6, radius=7)
         cancel_h.pack(side="right", pady=8)
 
-    # _detect_installer_type, _try_silent_install, _silent_succeeded → mt_backend
+    # ── helpers: deteksi tipe installer & silent install ────────────────────
+    @staticmethod
+    def _detect_installer_type(exe_path: Path) -> str:
+        """Baca byte header .exe untuk deteksi Inno Setup vs NSIS vs unknown."""
+        try:
+            data = exe_path.read_bytes()
+            if b"Inno Setup" in data[:65536]:
+                return "inno"
+            if b"Nullsoft" in data[:65536] or b"NSIS" in data[:65536]:
+                return "nsis"
+        except Exception:
+            pass
+        return "unknown"
+
+    @staticmethod
+    def _try_silent_install(installer_path: Path, inst_type: str,
+                            win_path: str, group_value: str,
+                            log_fn=None) -> "subprocess.Popen | None":
+        """
+        Coba jalankan installer dalam mode silent.
+        Return Popen object jika berhasil diluncurkan, None jika tidak support.
+
+        Inno Setup : /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+                     /DIR="C:\\path" /GROUP="nama group"
+        NSIS        : /S /D=C:\\path  /GROUP=nama group
+
+        Catatan: /VERYSILENT lebih kuat dari /SILENT —
+          /SILENT    masih tampilkan progress window
+          /VERYSILENT benar-benar tanpa UI sama sekali
+        """
+        try:
+            if inst_type == "inno":
+                cmd = [
+                    "wine", str(installer_path),
+                    "/VERYSILENT",
+                    "/SUPPRESSMSGBOXES",
+                    "/NORESTART",
+                    f"/DIR={win_path}",
+                    f"/GROUP={group_value}",
+                ]
+            elif inst_type == "nsis":
+                cmd = [
+                    "wine", str(installer_path),
+                    "/S",
+                    f"/D={win_path}",
+                    f"/GROUP={group_value}",
+                ]
+            else:
+                return None   # unknown → tidak coba silent
+
+            if log_fn:
+                log_fn(f"Silent cmd: {' '.join(cmd)}")
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            return proc
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            if log_fn:
+                log_fn(f"Silent launch error: {e}")
+            return None
+
+    @staticmethod
+    def _silent_succeeded(proc: "subprocess.Popen", install_dir_win: str,
+                          timeout: int = 120) -> bool:
+        """
+        Tunggu proc selesai (maks timeout detik) lalu verifikasi
+        apakah folder tujuan benar-benar terbuat di Wine filesystem.
+
+        Return True  → silent install sukses
+        Return False → gagal / folder tidak ditemukan
+        """
+        import time
+        deadline = time.time() + timeout
+        while proc.poll() is None:
+            if time.time() > deadline:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return False
+            time.sleep(0.5)
+
+        # Konversi Windows path → Linux path
+        # "C:\Program Files (x86)\MT4 Broker 1"
+        #   → ~/.wine/drive_c/Program Files (x86)/MT4 Broker 1
+        try:
+            wp = install_dir_win.replace("\\", "/").strip()
+            if len(wp) >= 3 and wp[1] == ":":
+                wp = wp[3:]
+            linux_path = Path.home() / ".wine/drive_c" / wp.lstrip("/")
+            return linux_path.exists()
+        except Exception:
+            return proc.returncode == 0
 
     def _run_mt_installer(self, installer_path: Path, qty: int, base_name: str = ""):
         """Jalankan installer sebanyak qty kali via Wine di background, tanpa popup.
@@ -1905,7 +2035,7 @@ class MTManager:
         - Setiap instance mendapat suffix angka: "Nama 1", "Nama 2", dst.
         """
         base_stem = base_name.strip() if base_name.strip() else installer_path.stem
-        inst_type = _detect_installer_type(installer_path)
+        inst_type = self._detect_installer_type(installer_path)
 
         def _do():
             import time
@@ -1924,10 +2054,10 @@ class MTManager:
                 silent_ok = False
                 if inst_type in ("inno", "nsis"):
                     try:
-                        proc = _try_silent_install(
+                        proc = self._try_silent_install(
                             installer_path, inst_type, win_path, group_value)
                         if proc:
-                            silent_ok = _silent_succeeded(proc, win_path)
+                            silent_ok = self._silent_succeeded(proc, win_path)
                             if silent_ok:
                                 done_cnt += 1
                             else:
@@ -2584,25 +2714,58 @@ class MTManager:
         self._status(f"Path: {t['path']}")
 
     def _reload_files(self, t):
-        """Muat ulang daftar file untuk terminal t. I/O dilakukan di backend."""
+        """Muat ulang daftar file untuk terminal t.
+
+        Optimasi:
+        - os.scandir() — satu syscall, stat sudah di-bundle, lebih cepat dari iterdir()+stat
+        - Kumpulkan semua baris dulu, baru insert massal (mengurangi redraw treeview)
+        - Triple delete diganti satu panggilan per tree
+        """
+        import os
         for tree in (self.chk_tree, self.cat_tree, self.file_tree):
             tree.delete(*tree.get_children())
         self._checked.clear()
         self._all_checked = False
         self.chk_tree.heading("chk", text=CHK_CHAR_OFF)
 
-        # I/O dilakukan di backend — main thread hanya insert ke Treeview
-        rows = list_terminal_files(t)
-        for row_idx, r in enumerate(rows):
+        # Kumpulkan semua baris dulu
+        rows = []
+        for key, label in (("experts", "Expert"), ("indicators", "Indicator"),
+                            ("scripts", "Script"), ("logs", "Log")):
+            folder = t.get(key)
+            if not (folder and folder.exists()):
+                continue
+            try:
+                # os.scandir: DirEntry sudah punya stat — tidak perlu .stat() terpisah
+                entries = sorted(
+                    (e for e in os.scandir(folder) if e.is_file(follow_symlinks=False)),
+                    key=lambda e: e.name
+                )
+            except OSError:
+                continue
+            for e in entries:
+                try:
+                    st = e.stat()
+                except OSError:
+                    continue
+                kb = st.st_size / 1024
+                sz = f"{kb:.1f} KB" if kb < 1024 else f"{kb / 1024:.2f} MB"
+                mtime = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
+                rows.append((label, e.name, sz, mtime))
+
+        # Batch insert
+        for row_idx, (label, fname, sz, mtime) in enumerate(rows):
             stripe = "row_even" if row_idx % 2 == 0 else "row_odd"
-            iid = r["iid"]
+            iid = f"r{row_idx}"
+            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
             self.chk_tree.insert("", "end", iid=iid,
                 values=(CHK_CHAR_OFF,), tags=(stripe,))
             self.cat_tree.insert("", "end", iid=iid,
-                values=(r["category"],), tags=(r["category"], stripe))
+                values=(label,), tags=(label, stripe))
             self.file_tree.insert("", "end", iid=iid,
-                values=(r["name"], r["ext"], r["size_str"], r["modified_str"]),
+                values=(fname, f".{ext}" if ext else "", sz, mtime),
                 tags=(stripe,))
+
     def _status(self, msg):
         self.status_var.set(msg)
 
@@ -3182,16 +3345,27 @@ class MTManager:
     # ── Scan ───────────────────────────────────────────────────────────────────
     # ── AutoStart helpers ─────────────────────────────────────────────────────
     def _autostart_desktop_path(self, t: dict) -> Path:
-        """Wrapper ke backend."""
-        return _autostart_desktop_path(t)
+        safe = t["name"].replace(" ", "_").replace("/", "_")
+        return AUTOSTART_DIR / f"{safe}.desktop"
 
     def _autostart_is_on(self, t: dict) -> bool:
-        """Wrapper ke backend."""
-        return _autostart_is_on(t)
+        return self._autostart_desktop_path(t).exists()
 
     def _autostart_icon_path(self, t: dict):
-        """Wrapper ke backend."""
-        return _autostart_icon_path(t)
+        """Cari file icon Terminal.ico (MT5) atau terminal.ico (MT4) dari folder instalasi."""
+        if t["type"] == "MT5":
+            # MT5: icon ada di folder instalasi langsung (path)
+            ico = Path(t["path"]) / "Terminal.ico"
+            return ico if ico.exists() else None
+        else:
+            # MT4: cari di install_path dulu, fallback ke AppData path
+            ip = t.get("install_path")
+            if ip:
+                ico = Path(ip) / "terminal.ico"
+                if ico.exists():
+                    return ico
+            ico = Path(t["path"]) / "terminal.ico"
+            return ico if ico.exists() else None
 
     def _autostart_set(self, t: dict, enable: bool) -> bool:
         dst = self._autostart_desktop_path(t)
@@ -3381,6 +3555,29 @@ class MTManager:
         """Alias publik — redraw canvas setelah scan."""
         self._draw_as_canvas()
 
+    def _autostart_sync_poll(self):
+        """Poll filesystem setiap 2 detik untuk sinkronkan state autostart.
+
+        Hanya cek entry yang di-cache sebagai ON (True). Jika file .desktop
+        sudah dihapus manual dari luar aplikasi, cache di-invalidate dan
+        slider langsung di-update tanpa perlu Scan ulang.
+        """
+        iid_map = getattr(self, "_iid_to_terminal", {})
+        changed = False
+        for iid, was_on in list(self._as_state_cache.items()):
+            if not was_on:
+                continue  # OFF tidak bisa berubah dari luar (hanya klik yg bisa ON-kan)
+            t = iid_map.get(iid)
+            if t is None:
+                continue
+            now_on = self._autostart_is_on(t)
+            if now_on != was_on:
+                self._as_state_cache[iid] = now_on
+                changed = True
+        if changed:
+            self._draw_as_canvas()
+        self.root.after(2000, self._autostart_sync_poll)
+
     def scan_terminals(self, silent=False):
         """Scan terminal MT di filesystem dan populate sidebar.
 
@@ -3395,9 +3592,99 @@ class MTManager:
         self._last_selected_path = None   # force reload saat pilih terminal setelah scan
         self._status("Memindai terminal…")
 
+        home = Path.home()
+        _wine_c   = home / ".wine/drive_c"
+        _games_c  = home / "Games/drive_c"
+
+        def _parse_origin(folder):
+            """Baca origin.txt → (name, install_path)."""
+            origin = folder / "origin.txt"
+            if not origin.exists():
+                return folder.name[:22], None
+            try:
+                raw_bytes = origin.read_bytes()
+            except OSError:
+                return folder.name[:22], None
+            raw = None
+            for enc in ("utf-16", "utf-16-le", "utf-16-be", "utf-8", "latin-1"):
+                try:
+                    dec = raw_bytes.decode(enc, errors="strict").replace("\x00", "").strip()
+                    if dec and ("\\" in dec or ":" in dec):
+                        raw = dec; break
+                except (UnicodeDecodeError, ValueError):
+                    continue
+            if not raw:
+                raw = raw_bytes.decode("utf-16", errors="ignore").replace("\x00", "").strip()
+            if not raw:
+                return folder.name[:22], None
+            line = raw.splitlines()[0].strip()
+            name = (line.replace("\\", "/").rstrip("/").split("/")[-1].strip()
+                    or folder.name[:22])
+            install = None
+            try:
+                wp = line.replace("\\", "/").strip().rstrip("/")
+                if len(wp) >= 3 and wp[1] == ":":
+                    wp = wp[3:]
+                if wp:
+                    for wc in (_wine_c, _games_c):  # hoist — tidak re-create Path setiap call
+                        c = wc / wp
+                        if c.exists():
+                            install = c; break
+            except Exception:
+                pass
+            return name, install
+
         def _scan_worker():
-            """Delegasikan seluruh I/O ke backend — tidak menyentuh tkinter."""
-            found = scan_worker()
+            """Semua I/O berjalan di sini — tidak menyentuh tkinter."""
+            found = []
+
+            # ── MT5 ──
+            for base in (_wine_c / "Program Files",
+                         _wine_c / "Program Files (x86)"):
+                if not base.exists():
+                    continue
+                for exe in base.rglob("terminal64.exe"):
+                    mt_dir = exe.parent
+                    mql5   = mt_dir / "MQL5"
+                    if mql5.exists():
+                        found.append({
+                            "type": "MT5", "name": mt_dir.name,
+                            "path": str(mt_dir),
+                            "experts":    mql5 / "Experts",
+                            "indicators": mql5 / "Indicators",
+                            "scripts":    mql5 / "Scripts",
+                            "logs":       mt_dir / "logs",
+                        })
+
+            # ── MT4 ──
+            users_dir = _wine_c / "users"
+            if users_dir.exists():
+                for userdir in users_dir.iterdir():
+                    tb = userdir / "AppData/Roaming/MetaQuotes/Terminal"
+                    if not tb.exists():
+                        continue
+                    for folder in tb.iterdir():
+                        mql4 = folder / "MQL4"
+                        if mql4.exists():
+                            _n4, _ip4 = _parse_origin(folder)
+                            if _ip4 is None:
+                                continue
+                            found.append({
+                                "type": "MT4", "name": _n4,
+                                "path": str(folder),
+                                "install_path": _ip4,
+                                "experts":    mql4 / "Experts",
+                                "indicators": mql4 / "Indicators",
+                                "scripts":    mql4 / "Scripts",
+                                "logs":       folder / "logs",
+                            })
+
+            # Natural sort
+            def _nat_key(item):
+                parts = re.split(r"(\d+)", item["name"].lower())
+                return [int(p) if p.isdigit() else p for p in parts]
+            found.sort(key=lambda x: (0 if x["type"] == "MT4" else 1, _nat_key(x)))
+
             self.root.after(0, lambda: _apply(found))
 
         def _apply(found):
