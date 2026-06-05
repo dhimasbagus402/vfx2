@@ -1340,12 +1340,21 @@ class MTManager:
         installer_entry.pack(fill="x", ipady=7, padx=1)
 
         def _pick_file():
+            # Lepas topmost + grab agar file explorer bisa muncul di atas window ini
+            try: win.attributes("-topmost", False)
+            except Exception: pass
             try: win.grab_release()
             except Exception: pass
+
             def _do_yad():
                 result = be.yad_pick_file(title="Pilih File Installer MT",
                     filetypes=["*.exe"], start_dir=DOCS_DIR, root_widget=self.root)
                 def _back():
+                    # Restore topmost + grab setelah file picker tutup
+                    try: win.attributes("-topmost", True)
+                    except Exception: pass
+                    win.lift()
+                    win.focus_force()
                     if result:
                         installer_var.set(result)
                         entry_border.config(bg=ACCENT)
