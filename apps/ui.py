@@ -1746,8 +1746,9 @@ class MTManager:
 
                 top_row = tk.Frame(card, bg=BG3)
                 top_row.pack(fill="x", padx=8, pady=(7, 2))
-                tk.Label(top_row, text=version, bg=badge_col, fg=BG,
-                         font=(f, 7, "bold"), padx=4, pady=1).pack(side="left")
+                badge_lbl = tk.Label(top_row, text=version, bg=badge_col, fg=BG,
+                                     font=(f, 7, "bold"), padx=4, pady=1)
+                badge_lbl.pack(side="left")
 
                 tk.Label(card, text=name, bg=BG3, fg=FG,
                          font=(f, 10, "bold"), anchor="w",
@@ -1758,14 +1759,23 @@ class MTManager:
                     for ch in w.winfo_children():
                         yield from _all_widgets(ch)
 
-                def _enter(e, c=card):
-                    for w in _all_widgets(c): 
-                        try: w.config(bg=BG4)
-                        except Exception: pass
-                def _leave(e, c=card):
+                def _enter(e, c=card, bl=badge_lbl, bc=badge_col):
                     for w in _all_widgets(c):
-                        try: w.config(bg=BG3)
-                        except Exception: pass
+                        if w is bl:
+                            # Badge tetap warna aslinya, hanya perkecil opacity
+                            try: w.config(bg=bc)
+                            except Exception: pass
+                        else:
+                            try: w.config(bg=BG4)
+                            except Exception: pass
+                def _leave(e, c=card, bl=badge_lbl, bc=badge_col):
+                    for w in _all_widgets(c):
+                        if w is bl:
+                            try: w.config(bg=bc)
+                            except Exception: pass
+                        else:
+                            try: w.config(bg=BG3)
+                            except Exception: pass
                 def _click(e, v=version, n=name, u=url):
                     if _downloading[0]:
                         status_var.set("\u23f3 Sedang mengunduh, tunggu selesai.")

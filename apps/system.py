@@ -725,9 +725,10 @@ def wget_then_install_bg(url: str, dest_dir: Path, broker_name: str,
 
             on_progress(f"Menjalankan installer {exe.name}\u2026")
             exe_name = exe.name
+            exe_path = exe   # simpan referensi sebelum thread lain
             try:
-                subprocess.Popen(
-                    ["wine", str(exe)],
+                proc = subprocess.Popen(
+                    ["wine", str(exe_path)],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
             except FileNotFoundError:
@@ -737,13 +738,16 @@ def wget_then_install_bg(url: str, dest_dir: Path, broker_name: str,
                 on_error(f"Gagal jalankan installer: {e}")
                 return
 
-            # Hapus .exe setelah Wine berhasil dijalankan
-            try:
-                time.sleep(1)
-                exe.unlink(missing_ok=True)
-            except Exception:
-                pass
+            # Hapus .exe SETELAH proses Wine selesai (di thread daemon terpisah)
+            def _wait_and_delete():
+                try:
+                    proc.wait()          # tunggu installer MT benar-benar selesai
+                    time.sleep(2)        # jeda kecil agar file tidak terkunci
+                    exe_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
+            threading.Thread(target=_wait_and_delete, daemon=True).start()
             on_success(exe_name, broker_name)
 
         except subprocess.TimeoutExpired:
