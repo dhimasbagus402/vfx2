@@ -13,6 +13,8 @@ import threading
 import datetime
 import time
 from pathlib import Path
+from urllib.request import urlopen
+from urllib.error import URLError
 
 __version__ = "1.3"
 
@@ -641,7 +643,83 @@ def wget_download_bg(url: str, dest_dir: Path,
 
 
 # ── MT Broker Download List ───────────────────────────────────────────────────
-MT_BROKER_LIST = [
+# URL raw file di GitHub (gunakan link "raw" bukan halaman HTML)
+_BROKER_LIST_URL = (
+    "https://raw.githubusercontent.com/dhimasbagus402/MT-List/main/MT_BROKER_LIST.txt"
+)
+
+# Cache hasil fetch agar tidak fetch ulang setiap kali diakses
+_broker_list_cache: list | None = None
+_broker_list_lock = threading.Lock()
+
+
+def _parse_broker_line(line: str) -> tuple | None:
+    """Parse satu baris format:  MT4|Nama Broker|https://url.exe
+    Baris kosong atau diawali '#' diabaikan.
+    """
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return None
+    parts = line.split("|", 2)
+    if len(parts) != 3:
+        return None
+    versi, nama, url = (p.strip() for p in parts)
+    if versi not in ("MT4", "MT5") or not url.startswith("http"):
+        return None
+    return (versi, nama, url)
+
+
+def _fetch_broker_list_from_url(url: str, timeout: int = 10) -> list | None:
+    """Fetch dan parse daftar broker dari URL. Return list of tuples atau None jika gagal."""
+    try:
+        with urlopen(url, timeout=timeout) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+        result = []
+        for line in text.splitlines():
+            entry = _parse_broker_line(line)
+            if entry:
+                result.append(entry)
+        return result if result else None
+    except Exception:
+        return None
+
+
+def get_broker_list(force_refresh: bool = False) -> list:
+    """Kembalikan daftar broker. Fetch dari GitHub, fallback ke list bawaan jika gagal."""
+    global _broker_list_cache
+    with _broker_list_lock:
+        if _broker_list_cache is not None and not force_refresh:
+            return _broker_list_cache
+        fetched = _fetch_broker_list_from_url(_BROKER_LIST_URL)
+        if fetched:
+            _broker_list_cache = fetched
+            return _broker_list_cache
+        # Fallback ke list hardcoded jika URL tidak bisa diakses
+        _broker_list_cache = _MT_BROKER_LIST_FALLBACK
+        return _broker_list_cache
+
+
+def refresh_broker_list_bg(on_done=None, on_error=None):
+    """Fetch ulang daftar broker di background thread.
+    on_done(broker_list) dipanggil jika berhasil.
+    on_error(msg) dipanggil jika gagal.
+    """
+    def _run():
+        global _broker_list_cache
+        fetched = _fetch_broker_list_from_url(_BROKER_LIST_URL)
+        if fetched:
+            with _broker_list_lock:
+                _broker_list_cache = fetched
+            if on_done:
+                on_done(fetched)
+        else:
+            if on_error:
+                on_error("Gagal mengambil daftar broker dari GitHub.")
+    threading.Thread(target=_run, daemon=True).start()
+
+
+# ── Fallback list (dipakai jika URL tidak bisa diakses) ──────────────────────
+_MT_BROKER_LIST_FALLBACK = [
     # (versi, nama_tampil, url)
     # ── MT4 ──
     ("MT4", "FBS",          "https://download.mql5.com/cdn/web/fbs.markets.inc/mt4/fbs4setup.exe"),
@@ -681,6 +759,9 @@ MT_BROKER_LIST = [
     ("MT5", "Vantage",      "https://download.metatrader.com/cdn/web/14111/mt5/vantageinternational5setup.exe"),
     ("MT5", "MT5 Umum",     "https://download.mql5.com/cdn/web/metaquotes.ltd/mt5/mt5setup.exe"),
 ]
+
+# Alias untuk kompatibilitas mundur (jika ada kode lain yang pakai MT_BROKER_LIST langsung)
+MT_BROKER_LIST = _MT_BROKER_LIST_FALLBACK
 
 
 def wget_then_install_bg(url: str, dest_dir: Path, broker_name: str,
