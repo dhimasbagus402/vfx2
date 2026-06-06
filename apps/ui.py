@@ -2432,15 +2432,26 @@ class MTManager:
 
     # ── Scan terminals ────────────────────────────────────────────────────────
     def scan_terminals(self, silent=False):
+        # Bersihkan SEMUA tiga tree sekaligus
         self.term_tree.delete(*self.term_tree.get_children())
-        self.file_tree.delete(*self.file_tree.get_children())
+        for tree in (self.chk_tree, self.cat_tree, self.file_tree):
+            tree.delete(*tree.get_children())
+        # Reset state checkbox
+        self._checked.clear()
+        self._all_checked = False
+        self.chk_tree.heading("chk", text=CHK_CHAR_OFF)
+        # Reset info bar ke default
+        for key, (var, lbl) in self._info_fields.items():
+            var.set("—")
+        self._info_fields["type"][1].config(fg=FG)
+        self._info_fields["path"][1].config(fg=FG)
         self.terminals.clear()
         self._as_state_cache.clear()
         self._last_selected_path = None
         # Bersihkan clipboard agar tidak ada referensi path lama
         self._clipboard      = []
         self._clipboard_mode = ""
-        self._status("Memindai terminal\u2026")
+        self._status("Memindai terminal…")
 
         def _on_result(found):
             self.root.after(0, lambda: self._apply_scan(found, silent))
@@ -2449,7 +2460,11 @@ class MTManager:
 
     def _apply_scan(self, found, silent):
         self.terminals.clear(); self.terminals.extend(found)
+        # Pastikan semua tree bersih dan selection cleared
+        self.term_tree.selection_remove(*self.term_tree.selection())
         self.term_tree.delete(*self.term_tree.get_children())
+        for tree in (self.chk_tree, self.cat_tree, self.file_tree):
+            tree.delete(*tree.get_children())
         self._iid_to_terminal = {}
         cur_type = None
         for item in found:
