@@ -687,16 +687,20 @@ MT_BROKER_LIST = [
 
 def wget_then_install_bg(url: str, dest_dir: Path, broker_name: str,
                          on_progress, on_success, on_error, on_timeout):
-    """Unduh installer via wget lalu langsung jalankan via wine.
+    """Unduh installer via wget, jalankan via wine, lalu hapus file .exe.
 
     Callbacks:
       on_progress(msg)           — update teks status
-      on_success(exe_path, name) — unduh selesai, installer telah dijalankan
+      on_success(exe_name, name) — installer dijalankan, exe sudah dihapus
       on_error(msg)              — gagal unduh atau jalankan
       on_timeout()               — wget timeout
     """
     def _run():
         try:
+            # Snapshot file .exe yang sudah ada sebelum unduh
+            existing = {f for f in dest_dir.iterdir() if f.suffix.lower() == ".exe"} \
+                       if dest_dir.exists() else set()
+
             on_progress(f"Mengunduh {broker_name}\u2026")
             result = subprocess.run(
                 ["wget", "-P", str(dest_dir), "--content-disposition", url],
@@ -708,25 +712,39 @@ def wget_then_install_bg(url: str, dest_dir: Path, broker_name: str,
                 on_error(f"Unduh gagal: {err[:80]}")
                 return
 
-            # Temukan file yang baru diunduh (terbaru di dest_dir)
-            files = sorted(dest_dir.iterdir(),
-                           key=lambda f: f.stat().st_mtime, reverse=True)
-            exe = next((f for f in files if f.suffix.lower() == ".exe"), None)
+            # Temukan file .exe baru (yang belum ada sebelumnya)
+            after = {f for f in dest_dir.iterdir() if f.suffix.lower() == ".exe"}
+            new_files = after - existing
+            exe = max(new_files, key=lambda f: f.stat().st_mtime) if new_files else None
+            if exe is None:
+                all_exe = sorted(after, key=lambda f: f.stat().st_mtime, reverse=True)
+                exe = all_exe[0] if all_exe else None
             if exe is None:
                 on_error("File .exe tidak ditemukan setelah unduh.")
                 return
 
             on_progress(f"Menjalankan installer {exe.name}\u2026")
+            exe_name = exe.name
             try:
                 subprocess.Popen(
                     ["wine", str(exe)],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
-                on_success(exe, broker_name)
             except FileNotFoundError:
                 on_error("wine tidak ditemukan. Install: sudo apt install wine")
+                return
             except Exception as e:
                 on_error(f"Gagal jalankan installer: {e}")
+                return
+
+            # Hapus .exe setelah Wine berhasil dijalankan
+            try:
+                time.sleep(1)
+                exe.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+            on_success(exe_name, broker_name)
 
         except subprocess.TimeoutExpired:
             on_timeout()

@@ -1629,175 +1629,64 @@ class MTManager:
         win = tk.Toplevel(self.root)
         win.title("Install MetaTrader")
         win.configure(bg=BG)
-        win.resizable(False, False)
-        win.attributes("-topmost", True)
+        win.resizable(True, True)
+        # Tidak set topmost agar window installer MT bisa muncul di atas
         win.update_idletasks()
-        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 320
-        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 240
-        win.geometry(f"640x480+{rx}+{ry}")
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 340
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 260
+        win.geometry(f"680x520+{rx}+{ry}")
+        win.minsize(520, 400)
         win.deiconify()
 
         # ── Header ──
-        hdr = tk.Frame(win, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
-        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
+        hdr = tk.Frame(win, bg=BG2, height=48)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20)
+        hdr_inner.pack(fill="both", expand=True)
         tk.Label(hdr_inner, text="\u2b07  Install MetaTrader",
                  bg=BG2, fg=FG, font=(f, 12, "bold")).pack(side="left", fill="y")
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
 
-        # ── Tab bar ──
-        tab_bar = tk.Frame(win, bg=BG2)
-        tab_bar.pack(fill="x")
+        # ── Filter bar ──
+        filter_bar = tk.Frame(win, bg=BG2, padx=14, pady=7)
+        filter_bar.pack(fill="x")
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
 
-        content = tk.Frame(win, bg=BG)
-        content.pack(fill="both", expand=True)
-
-        # ── Status + progress (shared) ──
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
-        status_frame = tk.Frame(win, bg=BG2, padx=14, pady=6)
-        status_frame.pack(fill="x")
-        status_var = tk.StringVar(value="Pilih broker untuk mengunduh dan menginstall.")
-        status_lbl = tk.Label(status_frame, textvariable=status_var,
-                              bg=BG2, fg=FG3, font=(f, 9), anchor="w")
-        status_lbl.pack(side="left", fill="x", expand=True)
-        prog_var = tk.DoubleVar(value=0.0)
-        prog_bar = ProgressBar(win, height=2, bg=BG4, fill=ACCENT)
-        prog_bar.pack(fill="x")
-
-        # ── Footer ──
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
-        foot = tk.Frame(win, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
-        fi   = tk.Frame(foot, bg=BG2, padx=14); fi.pack(fill="both", expand=True)
-        cancel_h, _ = make_pill_btn(fi, "Tutup", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
-                                    font_size=9, padx=20, pady=6, radius=7)
-        cancel_h.pack(side="right", pady=8)
-
-        # ══════════════════════════════════════════════════════════════════════
-        # TAB 1 — Download dari web (broker list)
-        # ══════════════════════════════════════════════════════════════════════
-        tab1_frame = tk.Frame(content, bg=BG)
-        tab2_frame = tk.Frame(content, bg=BG)
-
-        _active_tab = [1]
+        ver_var    = tk.StringVar(value="Semua")
+        search_var = tk.StringVar()
+        _filter_btns = {}
         _downloading = [False]
 
-        def _show_tab(n):
-            if n == 1:
-                tab2_frame.pack_forget(); tab1_frame.pack(fill="both", expand=True)
-                btn_tab1.config(bg=BG3, fg=FG)
-                btn_tab2.config(bg=BG2, fg=FG3)
-            else:
-                tab1_frame.pack_forget(); tab2_frame.pack(fill="both", expand=True)
-                btn_tab1.config(bg=BG2, fg=FG3)
-                btn_tab2.config(bg=BG3, fg=FG)
-            _active_tab[0] = n
+        tk.Label(filter_bar, text="Filter:", bg=BG2, fg=FG3, font=(f, 9)).pack(side="left")
+        for lbl in ("Semua", "MT4", "MT5"):
+            b = tk.Label(filter_bar, text=lbl, bg=ACCENT_DIM if lbl == "Semua" else BG3,
+                         fg=ACCENT if lbl == "Semua" else FG3,
+                         font=(f, 9), padx=10, pady=4, cursor="hand2")
+            b.pack(side="left", padx=(4, 0))
+            _filter_btns[lbl] = b
 
-        btn_tab1 = tk.Label(tab_bar, text="  \u2b07  Download dari Web  ",
-                            bg=BG3, fg=FG, font=(f, 9, "bold"),
-                            padx=4, pady=8, cursor="hand2")
-        btn_tab1.pack(side="left")
-        btn_tab1.bind("<Button-1>", lambda e: _show_tab(1))
+        def _set_filter(lbl):
+            ver_var.set(lbl)
+            for k, btn in _filter_btns.items():
+                btn.config(bg=ACCENT_DIM if k == lbl else BG3,
+                           fg=ACCENT     if k == lbl else FG3)
+            _build_broker_list()
 
-        tk.Frame(tab_bar, bg=BORDER, width=1).pack(side="left", fill="y")
-
-        btn_tab2 = tk.Label(tab_bar, text="  \u25a6  Browse File Lokal  ",
-                            bg=BG2, fg=FG3, font=(f, 9),
-                            padx=4, pady=8, cursor="hand2")
-        btn_tab2.pack(side="left")
-        btn_tab2.bind("<Button-1>", lambda e: _show_tab(2))
-
-        # ── Tab 1: Filter bar + scrollable broker grid ──
-        filter_bar = tk.Frame(tab1_frame, bg=BG, padx=14, pady=8)
-        filter_bar.pack(fill="x")
-
-        # Filter MT4/MT5/Semua
-        ver_var = tk.StringVar(value="Semua")
-
-        def _build_broker_list(*_):
-            """Rebuild broker grid sesuai filter."""
-            for w in broker_inner.winfo_children():
-                w.destroy()
-
-            ver     = ver_var.get()
-            search  = search_var.get().strip().lower()
-            brokers = [b for b in be.MT_BROKER_LIST
-                       if (ver == "Semua" or b[0] == ver)
-                       and (not search or search in b[1].lower())]
-
-            if not brokers:
-                tk.Label(broker_inner, text="Tidak ada hasil.",
-                         bg=BG, fg=FG3, font=(f, 9)).pack(pady=20)
-                return
-
-            # Grid 3 kolom
-            COLS = 3
-            for idx, (version, name, url) in enumerate(brokers):
-                row_f = idx // COLS
-                col_f = idx % COLS
-
-                badge_col  = ACCENT3 if version == "MT4" else WARN
-                card = tk.Frame(broker_inner, bg=BG3, cursor="hand2")
-                card.grid(row=row_f, column=col_f, padx=6, pady=5, sticky="ew")
-                broker_inner.columnconfigure(col_f, weight=1)
-
-                # Badge versi
-                badge_fr = tk.Frame(card, bg=BG3); badge_fr.pack(fill="x", padx=10, pady=(8,2))
-                tk.Label(badge_fr, text=version, bg=badge_col, fg=BG,
-                         font=(f, 7, "bold"), padx=4, pady=1).pack(side="left")
-
-                # Nama broker
-                tk.Label(card, text=name, bg=BG3, fg=FG,
-                         font=(f, 10, "bold"), anchor="w",
-                         padx=10).pack(fill="x", pady=(0, 8))
-
-                # Hover
-                def _enter(e, c=card): c.config(bg=BG4); [w.config(bg=BG4) for w in c.winfo_children() if hasattr(w,'config')]
-                def _leave(e, c=card): c.config(bg=BG3); [w.config(bg=BG3) for w in c.winfo_children() if hasattr(w,'config')]
-
-                def _click(e, v=version, n=name, u=url):
-                    if _downloading[0]:
-                        status_var.set("\u23f3 Sedang mengunduh, tunggu selesai.")
-                        return
-                    _start_download(v, n, u)
-
-                for w_ in [card] + list(card.winfo_children()):
-                    w_.bind("<Enter>",    _enter)
-                    w_.bind("<Leave>",    _leave)
-                    w_.bind("<Button-1>", _click)
-
-        # Search bar
-        search_var = tk.StringVar()
-        search_var.trace_add("write", _build_broker_list)
-
-        tk.Label(filter_bar, text="Filter:", bg=BG, fg=FG3, font=(f, 9)).pack(side="left")
-        for label in ("Semua", "MT4", "MT5"):
-            def _mk_ver_btn(lbl=label):
-                b = tk.Label(filter_bar, text=lbl, bg=BG3, fg=FG,
-                             font=(f, 9), padx=10, pady=4, cursor="hand2")
-                b.pack(side="left", padx=(4, 0))
-                def _click(e):
-                    ver_var.set(lbl)
-                    _build_broker_list()
-                    # Update visual
-                    for child in filter_bar.winfo_children():
-                        if isinstance(child, tk.Label) and child.cget("text") in ("Semua","MT4","MT5"):
-                            child.config(bg=BG3, fg=FG3)
-                    b.config(bg=ACCENT_DIM, fg=ACCENT)
-                b.bind("<Button-1>", _click)
-                if lbl == "Semua":
-                    b.config(bg=ACCENT_DIM, fg=ACCENT)
-            _mk_ver_btn()
+        for lbl in ("Semua", "MT4", "MT5"):
+            _filter_btns[lbl].bind("<Button-1>", lambda e, l=lbl: _set_filter(l))
 
         tk.Frame(filter_bar, bg=BORDER2, width=1).pack(side="left", fill="y", padx=8, pady=2)
-        tk.Label(filter_bar, text="\u26b2", bg=BG, fg=FG3, font=(f, 9)).pack(side="left")
-        search_entry = tk.Entry(filter_bar, textvariable=search_var,
-                                bg=BG3, fg=FG, insertbackground=ACCENT,
-                                relief="flat", font=(f, 9), highlightthickness=0, width=14)
-        search_entry.pack(side="left", padx=(4, 0), ipady=4)
+        tk.Label(filter_bar, text="\u26b2", bg=BG2, fg=FG3, font=(f, 9)).pack(side="left")
+        tk.Entry(filter_bar, textvariable=search_var,
+                 bg=BG3, fg=FG, insertbackground=ACCENT, relief="flat",
+                 font=(f, 9), highlightthickness=0, width=16).pack(
+                 side="left", padx=(4, 0), ipady=4)
+        search_var.trace_add("write", lambda *_: _build_broker_list())
 
-        # Scrollable broker grid
-        grid_outer = tk.Frame(tab1_frame, bg=BG)
-        grid_outer.pack(fill="both", expand=True, padx=14, pady=(0, 8))
+        # ── Scrollable broker grid ──
+        grid_outer = tk.Frame(win, bg=BG)
+        grid_outer.pack(fill="both", expand=True, padx=10, pady=(8, 4))
 
         canvas_grid = tk.Canvas(grid_outer, bg=BG, highlightthickness=0)
         sb_grid     = RoundScrollbar(grid_outer, command=canvas_grid.yview)
@@ -1806,46 +1695,118 @@ class MTManager:
         canvas_grid.configure(yscrollcommand=sb_grid.set)
 
         broker_inner = tk.Frame(canvas_grid, bg=BG)
-        broker_win   = canvas_grid.create_window((0, 0), window=broker_inner, anchor="nw")
+        broker_win_id = canvas_grid.create_window((0, 0), window=broker_inner, anchor="nw")
 
-        def _on_broker_configure(e):
+        def _on_broker_configure(e=None):
             canvas_grid.configure(scrollregion=canvas_grid.bbox("all"))
-            canvas_grid.itemconfig(broker_win, width=canvas_grid.winfo_width())
         broker_inner.bind("<Configure>", _on_broker_configure)
-        canvas_grid.bind("<Configure>",
-            lambda e: canvas_grid.itemconfig(broker_win, width=e.width))
-        for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-            canvas_grid.bind(ev, lambda e: canvas_grid.yview_scroll(
-                -3 if (e.num == 4 or e.delta > 0) else 3, "units"))
-            broker_inner.bind(ev, lambda e: canvas_grid.yview_scroll(
-                -3 if (e.num == 4 or e.delta > 0) else 3, "units"))
+
+        def _on_canvas_resize(e):
+            canvas_grid.itemconfig(broker_win_id, width=e.width)
+        canvas_grid.bind("<Configure>", _on_canvas_resize)
+
+        # Scroll via mouse — bind ke semua widget agar lebih responsif
+        def _do_scroll(e):
+            delta = -3 if (e.num == 4 or e.delta > 0) else 3
+            canvas_grid.yview_scroll(delta, "units")
+            return "break"
+
+        for widget in (canvas_grid, broker_inner, win):
+            for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                widget.bind(ev, _do_scroll, add=True)
+
+        def _rebind_scroll(parent):
+            """Bind scroll ke semua child widget secara rekursif."""
+            for child in parent.winfo_children():
+                for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                    child.bind(ev, _do_scroll, add=True)
+                _rebind_scroll(child)
+
+        def _build_broker_list(*_):
+            for w in broker_inner.winfo_children():
+                w.destroy()
+            ver    = ver_var.get()
+            search = search_var.get().strip().lower()
+            brokers = [b for b in be.MT_BROKER_LIST
+                       if (ver == "Semua" or b[0] == ver)
+                       and (not search or search in b[1].lower())]
+            if not brokers:
+                tk.Label(broker_inner, text="Tidak ada hasil.",
+                         bg=BG, fg=FG3, font=(f, 9)).pack(pady=20)
+                return
+
+            COLS = 3
+            for idx, (version, name, url) in enumerate(brokers):
+                r, c = divmod(idx, COLS)
+                badge_col = ACCENT3 if version == "MT4" else WARN
+
+                card = tk.Frame(broker_inner, bg=BG3, cursor="hand2")
+                card.grid(row=r, column=c, padx=5, pady=4, sticky="ew")
+                broker_inner.columnconfigure(c, weight=1)
+
+                top_row = tk.Frame(card, bg=BG3)
+                top_row.pack(fill="x", padx=8, pady=(7, 2))
+                tk.Label(top_row, text=version, bg=badge_col, fg=BG,
+                         font=(f, 7, "bold"), padx=4, pady=1).pack(side="left")
+
+                tk.Label(card, text=name, bg=BG3, fg=FG,
+                         font=(f, 10, "bold"), anchor="w",
+                         padx=8).pack(fill="x", pady=(0, 7))
+
+                def _all_widgets(w):
+                    yield w
+                    for ch in w.winfo_children():
+                        yield from _all_widgets(ch)
+
+                def _enter(e, c=card):
+                    for w in _all_widgets(c): 
+                        try: w.config(bg=BG4)
+                        except Exception: pass
+                def _leave(e, c=card):
+                    for w in _all_widgets(c):
+                        try: w.config(bg=BG3)
+                        except Exception: pass
+                def _click(e, v=version, n=name, u=url):
+                    if _downloading[0]:
+                        status_var.set("\u23f3 Sedang mengunduh, tunggu selesai.")
+                        return
+                    _start_download(v, n, u)
+
+                for w_ in _all_widgets(card):
+                    w_.bind("<Enter>",    _enter)
+                    w_.bind("<Leave>",    _leave)
+                    w_.bind("<Button-1>", _click)
+                    for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                        w_.bind(ev, _do_scroll, add=True)
+
+            win.after(10, _on_broker_configure)
 
         win.after(50, _build_broker_list)
 
-        # ── Download handler ──────────────────────────────────────────────────
+        # ── Download & install handler ──
         def _start_download(version, name, url):
             if not sh_.which("wget"):
                 status_var.set("\u26a0 wget tidak ditemukan. Jalankan: sudo apt install wget")
-                status_lbl.config(fg=WARN); return
-
+                status_lbl.config(fg=WARN)
+                return
             _downloading[0] = True
-            prog_bar.set(0.0)
+            prog_bar.set(0.05)
             status_var.set(f"Mempersiapkan unduhan {name}\u2026")
             status_lbl.config(fg=FG3)
             DOCS_DIR.mkdir(exist_ok=True)
 
             def _on_progress(msg):
-                win.after(0, lambda: (status_var.set(msg),
-                                      prog_bar.set(0.4)))
+                win.after(0, lambda: (status_var.set(msg), prog_bar.set(0.45)))
 
-            def _on_success(exe_path, bname):
+            def _on_success(exe_name, bname):
                 def _done():
                     _downloading[0] = False
                     prog_bar.set(1.0)
-                    status_var.set(f"\u2713 {bname} berhasil diunduh & installer dijalankan.")
+                    status_var.set(
+                        f"\u2713 {bname} — installer dijalankan. "
+                        f"File {exe_name} telah dihapus otomatis.")
                     status_lbl.config(fg="#5ecf3e")
                     self._status(f"Install MT {bname} dijalankan via Wine.")
-                    # Auto scan setelah jeda
                     self.root.after(5000, lambda: self.scan_terminals(silent=True))
                 win.after(0, _done)
 
@@ -1861,29 +1822,30 @@ class MTManager:
                 def _to():
                     _downloading[0] = False
                     prog_bar.set(0.0)
-                    status_var.set("\u26a0 Timeout \u2014 unduhan terlalu lama (>5 menit).")
+                    status_var.set("\u26a0 Timeout — unduhan terlalu lama (>5 menit).")
                     status_lbl.config(fg=WARN)
                 win.after(0, _to)
 
             be.wget_then_install_bg(url, DOCS_DIR, name,
                                     _on_progress, _on_success, _on_error, _on_timeout)
 
-        # ══════════════════════════════════════════════════════════════════════
-        # TAB 2 — Browse file lokal
-        # ══════════════════════════════════════════════════════════════════════
-        body2 = tk.Frame(tab2_frame, bg=BG, padx=24, pady=20)
-        body2.pack(fill="both", expand=True)
+        # ── Divider + Browse section ──
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        browse_sec = tk.Frame(win, bg=BG2, padx=14, pady=10)
+        browse_sec.pack(fill="x")
 
-        tk.Label(body2, text="FILE INSTALLER (.EXE)",
-                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
-        file_row     = tk.Frame(body2, bg=BG); file_row.pack(fill="x", pady=(4, 0))
+        tk.Label(browse_sec, text="ATAU GUNAKAN FILE INSTALLER LOKAL",
+                 bg=BG2, fg=FG3, font=(f, 8), anchor="w").pack(fill="x", pady=(0, 6))
+
+        file_row      = tk.Frame(browse_sec, bg=BG2)
+        file_row.pack(fill="x")
         installer_var = tk.StringVar(value="")
         entry_border  = tk.Frame(file_row, bg=BORDER2, padx=1, pady=1)
         entry_border.pack(side="left", fill="x", expand=True, padx=(0, 8))
         tk.Entry(entry_border, textvariable=installer_var,
                  bg=BG3, fg=FG2, insertbackground=ACCENT, relief="flat",
                  font=(fm, 9), highlightthickness=0, state="readonly").pack(
-                 fill="x", ipady=7, padx=1)
+                 fill="x", ipady=6, padx=1)
 
         def _pick_file():
             try: win.attributes("-topmost", False)
@@ -1894,8 +1856,6 @@ class MTManager:
                 result = be.yad_pick_file(title="Pilih File Installer MT",
                     filetypes=["*.exe"], start_dir=DOCS_DIR, root_widget=self.root)
                 def _back():
-                    try: win.attributes("-topmost", True)
-                    except Exception: pass
                     win.lift(); win.focus_force()
                     if result:
                         installer_var.set(result)
@@ -1908,8 +1868,8 @@ class MTManager:
 
         bh_, _ = make_pill_btn(file_row, "\u25a6 Browse", _pick_file,
                                bg=BG3, fg=FG, hover_bg=BG4,
-                               font_size=10, padx=12, pady=7, radius=7)
-        bh_.pack(side="left")
+                               font_size=9, padx=12, pady=6, radius=7)
+        bh_.pack(side="left", padx=(0, 6))
 
         def _run_install_local():
             path = installer_var.get().strip()
@@ -1929,26 +1889,32 @@ class MTManager:
                 ))
             )
 
-        # Tombol install di footer saat tab2 aktif
-        run_h, _ = make_pill_btn(fi, "\u2b07  Mulai Install", _run_install_local,
+        run_h, _ = make_pill_btn(file_row, "\u2b07  Mulai Install", _run_install_local,
                                   bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
-                                  font_size=10, padx=20, pady=7, radius=7)
+                                  font_size=9, padx=14, pady=6, radius=7)
+        run_h.pack(side="left")
 
-        def _on_tab_change(n):
-            if n == 2:
-                run_h.pack(side="right", pady=8, padx=(0, 6))
-            else:
-                run_h.pack_forget()
+        # ── Status + progress + footer ──
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        status_frame = tk.Frame(win, bg=BG2, padx=14, pady=5)
+        status_frame.pack(fill="x")
+        status_var = tk.StringVar(value="Pilih broker untuk mengunduh dan menginstall otomatis.")
+        status_lbl = tk.Label(status_frame, textvariable=status_var,
+                              bg=BG2, fg=FG3, font=(f, 9), anchor="w")
+        status_lbl.pack(side="left", fill="x", expand=True)
+        prog_bar = ProgressBar(win, height=2, bg=BG4, fill=ACCENT)
+        prog_bar.pack(fill="x")
 
-        # Patch _show_tab untuk update footer
-        _orig_show = _show_tab
-        def _show_tab_ext(n):
-            _orig_show(n); _on_tab_change(n)
-        btn_tab1.bind("<Button-1>", lambda e: _show_tab_ext(1))
-        btn_tab2.bind("<Button-1>", lambda e: _show_tab_ext(2))
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=46)
+        foot.pack(fill="x")
+        foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=14)
+        fi.pack(fill="both", expand=True)
+        cancel_h, _ = make_pill_btn(fi, "Tutup", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=7)
 
-        # Tampilkan tab 1 awal
-        _show_tab(1)
 
     # ── Duplicate MT ──────────────────────────────────────────────────────────
     def duplicate_mt(self):
