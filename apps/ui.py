@@ -1869,7 +1869,7 @@ class MTManager:
                     _downloading[0] = False
                     prog_bar.set(1.0)
                     status_var.set(
-                        f"\u2713 {bname} — installer dijalankan. "
+                        f"\u2713 {bname} — installer dijalankan. ")
                     status_lbl.config(fg="#5ecf3e")
                     self._status(f"Install MT {bname} dijalankan via Wine.")
                     self.root.after(5000, lambda: self.scan_terminals(silent=True))
