@@ -1780,7 +1780,7 @@ class MTManager:
                     if _downloading[0]:
                         status_var.set("\u23f3 Sedang mengunduh, tunggu selesai.")
                         return
-                    _start_download(v, n, u)
+                    _confirm_download(v, n, u)
 
                 for w_ in _all_widgets(card):
                     w_.bind("<Enter>",    _enter)
@@ -1792,6 +1792,68 @@ class MTManager:
             win.after(10, _on_broker_configure)
 
         win.after(50, _build_broker_list)
+
+        # ── Konfirmasi download ──
+        def _confirm_download(version, name, url):
+            """Tampilkan popup konfirmasi sebelum mulai download."""
+            dlg = tk.Toplevel(win)
+            dlg.title("Konfirmasi Install")
+            dlg.configure(bg=BG)
+            dlg.resizable(False, False)
+            dlg.transient(win)
+            dlg.update_idletasks()
+            dx = win.winfo_rootx() + win.winfo_width()  // 2 - 200
+            dy = win.winfo_rooty() + win.winfo_height() // 2 - 90
+            dlg.geometry(f"400x180+{dx}+{dy}")
+            dlg.deiconify()
+
+            badge_col = ACCENT3 if version == "MT4" else WARN
+
+            hdr = tk.Frame(dlg, bg=BG2, height=46)
+            hdr.pack(fill="x"); hdr.pack_propagate(False)
+            hdr_i = tk.Frame(hdr, bg=BG2, padx=18)
+            hdr_i.pack(fill="both", expand=True)
+            tk.Label(hdr_i, text="\u2b07  Konfirmasi Install MetaTrader",
+                     bg=BG2, fg=FG, font=(f, 11, "bold")).pack(side="left", fill="y")
+            tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+
+            body = tk.Frame(dlg, bg=BG, padx=22, pady=16)
+            body.pack(fill="both", expand=True)
+
+            info_row = tk.Frame(body, bg=BG)
+            info_row.pack(fill="x")
+            tk.Label(info_row, text=version, bg=badge_col, fg=BG,
+                     font=(f, 8, "bold"), padx=6, pady=2).pack(side="left")
+            tk.Label(info_row, text=f"  {name}", bg=BG, fg=FG,
+                     font=(f, 11, "bold")).pack(side="left")
+
+            tk.Label(body,
+                     text="File installer akan diunduh lalu dijalankan otomatis via Wine.\n"
+                          "File .exe akan dihapus setelah instalasi selesai.",
+                     bg=BG, fg=FG2, font=(f, 9), justify="left",
+                     anchor="w").pack(fill="x", pady=(8, 0))
+
+            tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+            foot_d = tk.Frame(dlg, bg=BG2, height=46)
+            foot_d.pack(fill="x"); foot_d.pack_propagate(False)
+            fi_d = tk.Frame(foot_d, bg=BG2, padx=12)
+            fi_d.pack(fill="both", expand=True)
+
+            def _do_install():
+                dlg.destroy()
+                _start_download(version, name, url)
+
+            ok_h, _ = make_pill_btn(fi_d, "\u2b07  Ya, Install", _do_install,
+                                     bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
+                                     font_size=9, padx=18, pady=6, radius=7)
+            ok_h.pack(side="right", pady=8, padx=(0, 6))
+            cancel_h2, _ = make_pill_btn(fi_d, "Batal", dlg.destroy,
+                                          bg=BG3, fg=FG, hover_bg=BG4,
+                                          font_size=9, padx=16, pady=6, radius=7)
+            cancel_h2.pack(side="right", pady=8)
+            try: dlg.grab_set()
+            except Exception: pass
+            dlg.focus_force()
 
         # ── Download & install handler ──
         def _start_download(version, name, url):
@@ -1889,14 +1951,26 @@ class MTManager:
             if not Path(path).exists():
                 status_var.set("\u26a0  File tidak ditemukan.")
                 status_lbl.config(fg=DANGER); return
-            win.destroy()
+            # Window TIDAK ditutup — tetap terbuka agar user bisa install lagi
+            status_var.set(f"\u25b6  Menjalankan installer: {Path(path).name}\u2026")
+            status_lbl.config(fg=FG3)
+            prog_bar.set(0.2)
+            def _on_finish_local(done, qty, fname, errs):
+                def _ui():
+                    prog_bar.set(1.0)
+                    if errs:
+                        status_var.set(f"\u26a0  Selesai dengan error: {errs[0][:60]}")
+                        status_lbl.config(fg=WARN)
+                    else:
+                        status_var.set(f"\u2713  {fname} berhasil diinstall.")
+                        status_lbl.config(fg="#5ecf3e")
+                    self._status(f"Install MT lokal selesai: {done}/{qty} dari {fname}")
+                    self.root.after(800, lambda: self.scan_terminals(silent=True))
+                win.after(0, _ui)
             be.run_mt_installer_bg(
                 Path(path), 1, "",
                 on_progress=None,
-                on_finish=lambda done, qty, name, errs: self.root.after(0, lambda: (
-                    self._status(f"Install MT selesai: {done}/{qty} dari {name}"),
-                    self.root.after(800, lambda: self.scan_terminals(silent=True))
-                ))
+                on_finish=_on_finish_local,
             )
 
         run_h, _ = make_pill_btn(file_row, "\u2b07  Mulai Install", _run_install_local,
