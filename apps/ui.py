@@ -1751,14 +1751,23 @@ class MTManager:
 
         def _start_fetch():
             _broker_data[0] = None
-            _show_loading()                     # langsung tampil sebelum thread jalan
-            def _on_done(data):
-                _broker_data[0] = data
-                win.after(0, _build_broker_list)
-            def _on_err(msg):
-                _broker_data[0] = []
-                win.after(0, lambda: _show_error(msg))
-            be.fetch_broker_list_bg(_on_done, _on_err)
+            _show_loading()
+            result_q = be.fetch_broker_list_bg(None, None)
+
+            def _poll():
+                try:
+                    kind, val = result_q.get_nowait()
+                    if kind == "ok":
+                        _broker_data[0] = val
+                        _build_broker_list()
+                    else:
+                        _broker_data[0] = []
+                        _show_error(val)
+                except Exception:
+                    # Queue masih kosong, cek lagi 100ms kemudian
+                    win.after(100, _poll)
+
+            win.after(100, _poll)
 
         def _build_broker_list(*_):
             data = _broker_data[0]
