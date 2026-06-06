@@ -13,7 +13,7 @@ import threading
 import datetime
 import time
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 
 __version__ = "1.3"
 
@@ -666,6 +666,7 @@ def _parse_broker_line(line: str) -> tuple | None:
 
 def fetch_broker_list(timeout: int = 10) -> tuple[list, str]:
     """Fetch dan parse daftar broker dari GitHub.
+    Selalu ambil versi terbaru — bypass HTTP cache dengan header dan query param.
 
     Return:
         (list_of_tuples, error_msg)
@@ -673,7 +674,16 @@ def fetch_broker_list(timeout: int = 10) -> tuple[list, str]:
         — Jika gagal:  ([], pesan_error)
     """
     try:
-        with urlopen(MT_BROKER_LIST_URL, timeout=timeout) as resp:
+        import time as _time
+        # Tambahkan timestamp sebagai query param agar URL selalu unik → tidak di-cache
+        bust = int(_time.time())
+        url  = f"{MT_BROKER_LIST_URL}?nocache={bust}"
+        req  = Request(url, headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma":        "no-cache",
+            "Expires":       "0",
+        })
+        with urlopen(req, timeout=timeout) as resp:
             text = resp.read().decode("utf-8", errors="replace")
         result = [_parse_broker_line(line) for line in text.splitlines()]
         result = [r for r in result if r is not None]
