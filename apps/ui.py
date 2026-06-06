@@ -1827,12 +1827,6 @@ class MTManager:
             tk.Label(info_row, text=f"  {name}", bg=BG, fg=FG,
                      font=(f, 11, "bold")).pack(side="left")
 
-            tk.Label(body,
-                     text="File installer akan diunduh lalu dijalankan otomatis via Wine.\n"
-                          "File .exe akan dihapus setelah instalasi selesai.",
-                     bg=BG, fg=FG2, font=(f, 9), justify="left",
-                     anchor="w").pack(fill="x", pady=(8, 0))
-
             tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
             foot_d = tk.Frame(dlg, bg=BG2, height=46)
             foot_d.pack(fill="x"); foot_d.pack_propagate(False)
