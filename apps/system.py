@@ -640,6 +640,102 @@ def wget_download_bg(url: str, dest_dir: Path,
     threading.Thread(target=_run, daemon=True).start()
 
 
+# ── MT Broker Download List ───────────────────────────────────────────────────
+MT_BROKER_LIST = [
+    # (versi, nama_tampil, url)
+    # ── MT4 ──
+    ("MT4", "FBS",          "https://download.mql5.com/cdn/web/fbs.markets.inc/mt4/fbs4setup.exe"),
+    ("MT4", "XM Global",    "https://download.mql5.com/cdn/web/xm.global.limited/mt4/xmglobal4setup.exe"),
+    ("MT4", "Tickmill",     "https://download.mql5.com/cdn/web/17409/mt4/tickmill4setup.exe"),
+    ("MT4", "JustForex",    "https://download.mql5.com/cdn/web/just.global.markets/mt4/justmarkets4setup.exe"),
+    ("MT4", "Weltrade",     "https://download.mql5.com/cdn/web/systemgates.limited/mt4/weltrade4setup.exe"),
+    ("MT4", "InstaForex",   "https://www.instaforex.com/downloads/itc4setup.exe"),
+    ("MT4", "OctaFX",       "https://download.mql5.com/cdn/web/octa.markets.incorporated/mt4/octafx4setup.exe"),
+    ("MT4", "Headway",      "https://download.mql5.com/cdn/web/jarocel.pty.ltd/mt4/headway4setup.exe"),
+    ("MT4", "Exness",       "https://download.metatrader.com/cdn/web/exness.technologies.ltd/mt4/exness4setup.exe"),
+    ("MT4", "HFM",          "https://download.mql5.com/cdn/web/7399/mt4/hfmarketssv4setup.exe"),
+    ("MT4", "IC Markets",   "https://download.mql5.com/cdn/web/18036/mt4/icmarketssc4setup.exe"),
+    ("MT4", "FXTM",         "https://download.mql5.com/cdn/web/16626/mt4/forextimefxtm4setup.exe"),
+    ("MT4", "Pepperstone",  "https://download.mql5.com/cdn/web/pepperstone.group.limited/mt4/pepperstone4setup.exe"),
+    ("MT4", "CXM Direct",   "https://download.mql5.com/cdn/web/16845/mt4/cxmdirect4setup.exe"),
+    ("MT4", "Forex4You",    "https://www.forex4you.io/wp-content/download/mt4setup.exe"),
+    ("MT4", "FX Clearing",  "https://download.mql5.com/cdn/web/fxcl.markets.ltd/mt4/fxcl4setup.exe"),
+    ("MT4", "AximTrade",    "https://download.mql5.com/cdn/web/18441/mt4/aximtrade2setup.exe"),
+    ("MT4", "Vantage",      "https://download.metatrader.com/cdn/web/14009/mt4/vantageinternational4setup.exe"),
+    # ── MT5 ──
+    ("MT5", "FBS",          "https://download.mql5.com/cdn/web/fbs.markets.inc/mt5/fbs5setup.exe"),
+    ("MT5", "XM Global",    "https://download.mql5.com/cdn/web/xm.global.limited/mt5/xmglobal5setup.exe"),
+    ("MT5", "Tickmill",     "https://download.mql5.com/cdn/web/19497/mt5/tickmill5setup.exe"),
+    ("MT5", "JustForex",    "https://download.mql5.com/cdn/web/just.global.markets/mt5/justmarkets5setup.exe"),
+    ("MT5", "Weltrade",     "https://download.mql5.com/cdn/web/systemgates.limited/mt5/weltrade5setup.exe"),
+    ("MT5", "InstaForex",   "https://download.mql5.com/cdn/web/instafintech.ltd/mt5/instaforex5setup.exe"),
+    ("MT5", "OctaFX",       "https://download.mql5.com/cdn/web/instafintech.ltd/mt5/instaforex5setup.exe"),
+    ("MT5", "Exness",       "https://download.metatrader.com/cdn/web/exness.technologies.ltd/mt5/exness5setup.exe"),
+    ("MT5", "Headway",      "https://download.mql5.com/cdn/web/jarocel.pty.ltd/mt5/headway5setup.exe"),
+    ("MT5", "HFM",          "https://download.mql5.com/cdn/web/12018/mt5/hfmarketsglobal5setup.exe"),
+    ("MT5", "IC Markets",   "https://download.mql5.com/cdn/web/18040/mt5/icmarketssc5setup.exe"),
+    ("MT5", "FXTM",         "https://download.mql5.com/cdn/web/16628/mt5/forextimefxtm5setup.exe"),
+    ("MT5", "Pepperstone",  "https://download.mql5.com/cdn/web/pepperstone.group.limited/mt5/pepperstone5setup.exe"),
+    ("MT5", "CXM Direct",   "https://download.mql5.com/cdn/web/22250/mt5/cxmdirect5setup.exe"),
+    ("MT5", "ThinkMarkets", "https://download.mql5.com/cdn/web/tf.global.markets/mt4/thinkmarkets4setup.exe"),
+    ("MT5", "Forex4You",    "https://www.forex4you.io/wp-content/download/metatrader5-forex4you.exe"),
+    ("MT5", "Deriv",        "https://download.mql5.com/cdn/web/deriv.com.limited/mt5/deriv5setup.exe"),
+    ("MT5", "Vantage",      "https://download.metatrader.com/cdn/web/14111/mt5/vantageinternational5setup.exe"),
+    ("MT5", "MT5 Umum",     "https://download.mql5.com/cdn/web/metaquotes.ltd/mt5/mt5setup.exe"),
+]
+
+
+def wget_then_install_bg(url: str, dest_dir: Path, broker_name: str,
+                         on_progress, on_success, on_error, on_timeout):
+    """Unduh installer via wget lalu langsung jalankan via wine.
+
+    Callbacks:
+      on_progress(msg)           — update teks status
+      on_success(exe_path, name) — unduh selesai, installer telah dijalankan
+      on_error(msg)              — gagal unduh atau jalankan
+      on_timeout()               — wget timeout
+    """
+    def _run():
+        try:
+            on_progress(f"Mengunduh {broker_name}\u2026")
+            result = subprocess.run(
+                ["wget", "-P", str(dest_dir), "--content-disposition", url],
+                capture_output=True, text=True, timeout=300,
+            )
+            if result.returncode != 0:
+                err_lines = result.stderr.strip().splitlines()
+                err = err_lines[-1] if err_lines else f"exit {result.returncode}"
+                on_error(f"Unduh gagal: {err[:80]}")
+                return
+
+            # Temukan file yang baru diunduh (terbaru di dest_dir)
+            files = sorted(dest_dir.iterdir(),
+                           key=lambda f: f.stat().st_mtime, reverse=True)
+            exe = next((f for f in files if f.suffix.lower() == ".exe"), None)
+            if exe is None:
+                on_error("File .exe tidak ditemukan setelah unduh.")
+                return
+
+            on_progress(f"Menjalankan installer {exe.name}\u2026")
+            try:
+                subprocess.Popen(
+                    ["wine", str(exe)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                on_success(exe, broker_name)
+            except FileNotFoundError:
+                on_error("wine tidak ditemukan. Install: sudo apt install wine")
+            except Exception as e:
+                on_error(f"Gagal jalankan installer: {e}")
+
+        except subprocess.TimeoutExpired:
+            on_timeout()
+        except Exception as e:
+            on_error(str(e))
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 # ── Uninstall MT helpers ──────────────────────────────────────────────────────
 def run_uninstall_bg(uninstall_exe: Path, t: dict,
                      on_done, on_wine_missing, on_error):
