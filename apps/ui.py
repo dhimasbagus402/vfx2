@@ -197,6 +197,21 @@ class MTManager:
         self.term_tree.tag_configure("MT5",   foreground=WHITE)
         self.term_tree.tag_configure("group", foreground=FG3, font=(f, 8))
 
+        # ── MANAGE MT (dasar sidebar) ─────────────────────────────────────────
+        tk.Label(sidebar, text="MANAGE", bg=BG2, fg=FG3,
+                 font=(f, 8), anchor="w", padx=14, pady=4).pack(fill="x", pady=(2, 0))
+        mt_wrap = tk.Frame(sidebar, bg=BG2, padx=10)
+        mt_wrap.pack(fill="x", pady=(0, 12))
+        mt_holder, _mt_canvas = make_pill_btn(
+            mt_wrap, "\u2699  Tambah / Kelola MT", self._manage_mt_menu,
+            bg=BG3, fg="#5ecf3e", hover_bg=BG4,
+            font_size=10, padx=12, pady=8, radius=8, fill_x=True)
+        mt_holder.pack(fill="x")
+        self._manage_mt_btn_holder = mt_holder
+        self._install_mt_btn_holder = mt_holder   # legacy alias
+        Tooltip(_mt_canvas, "Install, Duplicate, atau Uninstall MetaTrader",
+                position="above")
+
         # ── MAIN PANEL ────────────────────────────────────────────────────────
         main = tk.Frame(body, bg=BG)
         main.pack(side="left", fill="both", expand=True)
@@ -210,27 +225,18 @@ class MTManager:
         tb.pack(fill="both", expand=True)
 
         _btns = [
-            ("\u2191 Install EA / Indicator", self._install_menu,
+            ("\u2699 EA / Indicator", self._manage_ea_menu,
              ACCENT_DIM, ACCENT, "#1d2b36"),
+            ("\u2692 Utility", self._utility_menu, "#261a05", WARN, "#3d2a08"),
             None,  # separator
             ("\u25a6 Browse", self.browse_files, BG3, FG, BG4),
-            ("\u2015 Clear Logs", self.clear_logs, "#261a05", WARN, "#3d2a08"),
-            ("\u232b Delete", self.uninstall_file, "#2a0f0f", DANGER, "#3d1212"),
-            None,
-            ("\u26d4 Uninstall MT", self.uninstall_ea_exe, "#2a1a00", "#e07b00", "#3d2800"),
-            ("+ Install MT", self._install_mt_menu, "#0a1f0a", "#5ecf3e", "#152e15"),
-            None,
             ("\u25b6 Open MT", self.open_mt, "#0d2200", "#5ecf3e", "#1a3a00"),
-            ("\u270e MetaEditor", self.open_metaeditor, "#001a2a", "#3ab8e0", "#002a3d"),
         ]
         _tooltips = {
+            "\u2699 EA / Indicator": "Install atau hapus EA / Indikator pada MT",
+            "\u2692 Utility": "Clear Logs dan buka MetaEditor",
             "\u25a6 Browse": "Buka data Folder MT",
-            "\u2015 Clear Logs": "Hapus semua Logs pada MT",
-            "\u232b Delete": "Hapus EA atau Indikator pada MT",
-            "\u26d4 Uninstall MT": "Jalankan Uninstall.exe pada folder instalasi MT",
-            "+ Install MT": "Install MT baru atau Duplikat MT yang sudah ada",
             "\u25b6 Open MT": "Jalankan terminal MT yang dipilih",
-            "\u270e MetaEditor": "Buka MetaEditor untuk MT yang dipilih",
         }
 
         for item in _btns:
@@ -241,11 +247,12 @@ class MTManager:
             h, c = make_pill_btn(tb, lbl, cmd, bg=bg_, fg=fg_, hover_bg=hbg,
                                   font_size=10, padx=12, pady=7, radius=10)
             h.pack(side="left", pady=8, padx=2)
-            if lbl == "\u2191 Install EA / Indicator":
-                self._install_btn_holder = h
+            if lbl == "\u2699 EA / Indicator":
+                self._manage_ea_btn_holder = h
+                self._install_btn_holder = h   # legacy alias
                 self._install_btn_canvas = c
-            elif lbl == "+ Install MT":
-                self._install_mt_btn_holder = h
+            elif lbl == "\u2692 Utility":
+                self._utility_btn_holder = h
             if lbl in _tooltips:
                 Tooltip(c, _tooltips[lbl])
 
@@ -553,7 +560,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Gagal",
                     f"Script tidak ditemukan:\n{update_sh}")
@@ -1533,7 +1540,7 @@ class MTManager:
         win.update_idletasks(); self._center_win(win); win.deiconify(); win.lift(); win.focus_force()
 
     # ── Install MT dropdown ────────────────────────────────────────────────────
-    def _make_dropdown(self, anchor_widget, items, flag_attr):
+    def _make_dropdown(self, anchor_widget, items, flag_attr, direction="down"):
         if getattr(self, flag_attr, False):
             return
         setattr(self, flag_attr, True)
@@ -1570,7 +1577,11 @@ class MTManager:
         popup.update_idletasks()
         bx = anchor_widget.winfo_rootx(); by = anchor_widget.winfo_rooty()
         bh = anchor_widget.winfo_height()
-        popup.wm_geometry(f"+{bx}+{by + bh + 2}")
+        if direction == "up":
+            ph = popup.winfo_reqheight()
+            popup.wm_geometry(f"+{bx}+{by - ph - 2}")
+        else:
+            popup.wm_geometry(f"+{bx}+{by + bh + 2}")
 
         def _on_press_outside(event):
             if _closed[0]: return
@@ -1606,19 +1617,28 @@ class MTManager:
 
         popup.bind("<Destroy>", _cleanup)
 
-    def _install_menu(self):
+    def _manage_ea_menu(self):
         self._make_dropdown(
-            self._install_btn_holder,
+            self._manage_ea_btn_holder,
             [("\u2191  Install Expert Advisor", self.install_ea),
-             ("\u2191  Install Indicator",       self.install_indicator)],
-            "_install_popup_open")
+             ("\u2191  Install Indicator",       self.install_indicator),
+             ("\u232b  Delete EA / Indicator",   self.uninstall_file)],
+            "_manage_ea_popup_open")
 
-    def _install_mt_menu(self):
+    def _manage_mt_menu(self):
         self._make_dropdown(
-            self._install_mt_btn_holder,
-            [("\u2b07  Install MT",  self.install_mt),
-             ("\u2398  Duplikat MT", self.duplicate_mt)],
-            "_install_mt_popup_open")
+            self._manage_mt_btn_holder,
+            [("\u2b07  Install MetaTrader",   self.install_mt),
+             ("\u2398  Duplicate MetaTrader", self.duplicate_mt),
+             ("\u26d4  Uninstall MetaTrader", self.uninstall_ea_exe)],
+            "_manage_mt_popup_open", direction="up")
+
+    def _utility_menu(self):
+        self._make_dropdown(
+            self._utility_btn_holder,
+            [("\u2015  Clear Logs",      self.clear_logs),
+             ("\u270e  Open MetaEditor", self.open_metaeditor)],
+            "_utility_popup_open")
 
     # ── Install MT ────────────────────────────────────────────────────────────
     def install_mt(self):
@@ -2282,7 +2302,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Memeriksa update otomatis\u2026")
