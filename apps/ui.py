@@ -1732,6 +1732,8 @@ class MTManager:
             fr.pack(expand=True, pady=40)
             tk.Label(fr, text="\u29d7  Mengambil daftar broker dari GitHub\u2026",
                      bg=BG, fg=FG3, font=(f, 10)).pack()
+            broker_inner.update_idletasks()
+            canvas_grid.configure(scrollregion=canvas_grid.bbox("all"))
 
         def _show_error(msg):
             for w in broker_inner.winfo_children():
@@ -1749,7 +1751,7 @@ class MTManager:
 
         def _start_fetch():
             _broker_data[0] = None
-            _show_loading()
+            _show_loading()                     # langsung tampil sebelum thread jalan
             def _on_done(data):
                 _broker_data[0] = data
                 win.after(0, _build_broker_list)
@@ -1831,8 +1833,8 @@ class MTManager:
 
             win.after(10, _on_broker_configure)
 
-        # Mulai fetch otomatis saat window terbuka
-        win.after(50, _start_fetch)
+        # Fetch otomatis saat window terbuka
+        _start_fetch()
 
         # ── Konfirmasi download ──
         def _confirm_download(version, name, url):
