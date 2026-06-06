@@ -694,25 +694,21 @@ def fetch_broker_list(timeout: int = 10) -> tuple[list, str]:
         return [], f"Gagal mengambil daftar broker: {e}"
 
 
-def fetch_broker_list_bg(on_done, on_error):
-    """Fetch daftar broker di background thread menggunakan queue.
+def fetch_broker_list_bg():
+    """Fetch daftar broker di background thread.
 
-    Hasil diletakkan di queue, bukan dipanggil langsung dari thread —
-    aman untuk Tkinter yang tidak thread-safe.
-
-    Callbacks dijamin dipanggil dari main thread via polling di ui.py:
-      on_done(broker_list)  — list of (versi, nama, url)
-      on_error(msg)         — string pesan error
+    Return: queue.Queue — isi satu item ("ok", list) atau ("err", msg).
+    Caller wajib poll queue dari main thread (mis. via root.after).
+    Tidak ada callback yang dipanggil dari background thread
+    sehingga aman untuk Tkinter yang tidak thread-safe.
     """
-    import queue as _queue
-    result_q = _queue.Queue()
-
+    import queue as _q
+    q = _q.Queue()
     def _run():
         result, err = fetch_broker_list()
-        result_q.put(("ok", result) if result else ("err", err))
-
+        q.put(("ok", result) if result else ("err", err))
     threading.Thread(target=_run, daemon=True).start()
-    return result_q
+    return q
 
 
 

@@ -1752,22 +1752,22 @@ class MTManager:
         def _start_fetch():
             _broker_data[0] = None
             _show_loading()
-            result_q = be.fetch_broker_list_bg(None, None)
+            import queue as _q
+            q = be.fetch_broker_list_bg()
 
             def _poll():
                 try:
-                    kind, val = result_q.get_nowait()
+                    kind, val = q.get_nowait()
                     if kind == "ok":
                         _broker_data[0] = val
                         _build_broker_list()
                     else:
                         _broker_data[0] = []
                         _show_error(val)
-                except Exception:
-                    # Queue masih kosong, cek lagi 100ms kemudian
-                    win.after(100, _poll)
+                except _q.Empty:
+                    win.after(150, _poll)  # cek lagi 150ms kemudian
 
-            win.after(100, _poll)
+            win.after(150, _poll)
 
         def _build_broker_list(*_):
             data = _broker_data[0]
