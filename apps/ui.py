@@ -2100,8 +2100,8 @@ class MTManager:
         win.configure(bg=BG); win.resizable(False, False); win.attributes("-topmost", True)
         win.update_idletasks()
         rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 270
-        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 170
-        win.geometry(f"540x340+{rx}+{ry}"); win.deiconify()
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 190
+        win.geometry(f"540x380+{rx}+{ry}"); win.deiconify()
 
         hdr = tk.Frame(win, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
         hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
@@ -2109,13 +2109,16 @@ class MTManager:
                  bg=BG2, fg=FG, font=(f, 12, "bold")).pack(side="left", fill="y")
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
         body = tk.Frame(win, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
+
+        # ── Sumber ──
         tk.Label(body, text="SUMBER", bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
         src_border = tk.Frame(body, bg=BORDER2, padx=1, pady=1); src_border.pack(fill="x", pady=(4,14))
         tk.Label(src_border, text=f"  {t['name']}  [{mt_type}]  \u2192  {src_folder}",
                  bg=BG3, fg=FG2, font=(fm, 9), anchor="w").pack(fill="x", ipady=7, padx=1)
+
+        # ── Jumlah ──
         tk.Label(body, text="JUMLAH DUPLIKAT  (maks. 19)",
                  bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
-
         qty_row = tk.Frame(body, bg=BG); qty_row.pack(fill="x", pady=(4,6))
         qty_var = tk.IntVar(value=1)
         def _set_qty(v):
@@ -2123,7 +2126,6 @@ class MTManager:
             except (ValueError, tk.TclError): pass
         def _dec(): _set_qty(qty_var.get() - 1)
         def _inc(): _set_qty(qty_var.get() + 1)
-
         dec_h, _ = make_pill_btn(qty_row, "\u2212", _dec, bg=BG3, fg=FG, hover_bg=BG4,
                                   font_size=12, padx=10, pady=6, radius=7)
         dec_h.pack(side="left", padx=(0,6))
@@ -2137,27 +2139,51 @@ class MTManager:
                                   font_size=12, padx=10, pady=6, radius=7)
         inc_h.pack(side="left")
 
-        hint_var = tk.StringVar(value="")
-        tk.Label(body, textvariable=hint_var, bg=BG, fg=FG3, font=(f, 10), anchor="w",
-                 wraplength=480).pack(fill="x", pady=(4,8))
+        # ── Toggle custom nama ──
+        tk.Frame(body, bg=BORDER, height=1).pack(fill="x", pady=(10, 8))
+        custom_row = tk.Frame(body, bg=BG); custom_row.pack(fill="x")
+        custom_var = tk.BooleanVar(value=False)
 
-        def _update_hint(*_):
+        def _toggle_custom(*_):
+            hint_var.set(_build_hint())
+
+        ck_border = tk.Frame(custom_row, bg=BORDER2, padx=1, pady=1)
+        ck_border.pack(side="left")
+        ck = tk.Checkbutton(ck_border, variable=custom_var, bg=BG3,
+                            activebackground=BG3, selectcolor=BG3,
+                            fg=ACCENT, activeforeground=ACCENT,
+                            relief="flat", highlightthickness=0,
+                            command=_toggle_custom)
+        ck.pack(padx=4, pady=2)
+        tk.Label(custom_row, text="Custom nama folder", bg=BG, fg=FG2,
+                 font=(f, 9)).pack(side="left", padx=(8, 0))
+
+        # ── Preview hint ──
+        hint_var = tk.StringVar(value="")
+        tk.Label(body, textvariable=hint_var, bg=BG, fg=FG3, font=(f, 9), anchor="w",
+                 wraplength=490).pack(fill="x", pady=(8, 0))
+
+        def _build_hint():
             q = qty_var.get()
+            if custom_var.get():
+                return f"\u270e  Nama folder akan diisi satu per satu saat proses duplikasi."
             names = [f"{base_name} {n}" for n in range(2, 2 + q)]
             preview = ", ".join(names[:3])
             if q > 3: preview += ", \u2026"
-            hint_var.set(f"\u2192 folder: {preview}")
+            return f"\u2192 folder: {preview}"
 
+        def _update_hint(*_): hint_var.set(_build_hint())
         qty_var.trace_add("write", _update_hint); _update_hint()
-        status_var2 = tk.StringVar(value="")
-        tk.Label(body, textvariable=status_var2, bg=BG, fg=FG3, font=(f, 9), anchor="w").pack(fill="x")
+
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
         foot = tk.Frame(win, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
         fi = tk.Frame(foot, bg=BG2, padx=14); fi.pack(fill="both", expand=True)
 
         def _run_duplicate():
-            qty = qty_var.get(); win.destroy()
-            self._run_mt_duplicate(src_folder, base_name, linux_base, qty, mt_type)
+            qty = qty_var.get()
+            use_custom = custom_var.get()
+            win.destroy()
+            self._run_mt_duplicate(src_folder, base_name, linux_base, qty, mt_type, use_custom)
 
         run_h, _ = make_pill_btn(fi, "\u2398  Mulai Duplikat", _run_duplicate,
                                   bg="#1a1400", fg=WARN, hover_bg="#2a2000",
@@ -2167,81 +2193,186 @@ class MTManager:
                                     font_size=9, padx=20, pady=6, radius=7)
         cancel_h.pack(side="right", pady=8)
 
-    def _run_mt_duplicate(self, src_folder, base_name, linux_base, qty, mt_type):
-        f   = self._font
-        win = tk.Toplevel(self.root); win.title("Menduplikat MT")
-        win.configure(bg=BG); win.resizable(False, False); win.update_idletasks()
-        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 240
-        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 120
-        win.geometry(f"480x240+{rx}+{ry}"); win.deiconify()
-        body = tk.Frame(win, bg=BG, padx=28, pady=20); body.pack(fill="both", expand=True)
-        icon_lbl  = tk.Label(body, text="\u2398", bg=BG, fg=WARN, font=(f, 22))
-        icon_lbl.grid(row=0, column=0, rowspan=3, padx=(0,16), sticky="n")
-        title_lbl = tk.Label(body, text="Memulai duplikat\u2026",
-                             bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w")
-        title_lbl.grid(row=0, column=1, sticky="w")
-        dir_var   = tk.StringVar(value="")
-        dir_lbl   = tk.Label(body, textvariable=dir_var, bg=BG, fg=FG3, font=(f, 8), anchor="w")
-        dir_lbl.grid(row=1, column=1, sticky="w", pady=(2,6))
-        prog_frame = tk.Frame(body, bg=BG); prog_frame.grid(row=2, column=1, sticky="ew")
-        body.columnconfigure(1, weight=1)
-        progress  = ProgressBar(prog_frame, height=3, bg=BG4, fill=WARN); progress.pack(fill="x")
-        count_var = tk.StringVar(value=f"0 / {qty}")
-        tk.Label(prog_frame, textvariable=count_var, bg=BG, fg=FG3, font=(f, 8)).pack(anchor="e", pady=(3,0))
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
-        foot = tk.Frame(win, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
-        fi   = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
-        close_h, _ = make_pill_btn(fi, "Tutup", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
-                                   font_size=9, padx=20, pady=6, radius=7)
-        _cancelled = [False]
+    def _run_mt_duplicate(self, src_folder, base_name, linux_base, qty, mt_type,
+                          use_custom=False):
+        """Progress window duplikasi. Jika use_custom=True, tampilkan dialog
+        input nama folder sebelum tiap copy. Launch semua MT setelah semua
+        copy selesai (atau yang sudah ter-copy jika dibatalkan)."""
+        f  = self._font
+        fm = self._font_mono
 
-        def _do_cancel():
-            _cancelled[0] = True
-            icon_lbl.config(text="\u23f9", fg=WARN)
-            title_lbl.config(text="Duplikat dibatalkan.", fg=WARN)
-            dir_var.set(""); cancel_h.pack_forget(); close_h.pack(side="right", pady=8)
+        # ── Progress window (dipanggil setelah nama terkumpul) ──
+        def _launch_progress_win(custom_names_list):
+            win = tk.Toplevel(self.root); win.title("Menduplikat MT")
+            win.configure(bg=BG); win.resizable(False, False); win.update_idletasks()
+            rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 240
+            ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 130
+            win.geometry(f"480x260+{rx}+{ry}"); win.deiconify()
+            body = tk.Frame(win, bg=BG, padx=28, pady=20); body.pack(fill="both", expand=True)
+            icon_lbl  = tk.Label(body, text="\u2398", bg=BG, fg=WARN, font=(f, 22))
+            icon_lbl.grid(row=0, column=0, rowspan=4, padx=(0,16), sticky="n")
+            title_lbl = tk.Label(body, text="Memulai duplikat\u2026",
+                                 bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w")
+            title_lbl.grid(row=0, column=1, sticky="w")
+            dir_var = tk.StringVar(value="")
+            dir_lbl = tk.Label(body, textvariable=dir_var, bg=BG, fg=FG3, font=(f, 8), anchor="w")
+            dir_lbl.grid(row=1, column=1, sticky="w", pady=(2, 4))
+            phase_var = tk.StringVar(value="")
+            phase_lbl = tk.Label(body, textvariable=phase_var, bg=BG, fg=FG3, font=(f, 8), anchor="w")
+            phase_lbl.grid(row=2, column=1, sticky="w", pady=(0, 6))
+            prog_frame = tk.Frame(body, bg=BG); prog_frame.grid(row=3, column=1, sticky="ew")
+            body.columnconfigure(1, weight=1)
+            progress  = ProgressBar(prog_frame, height=3, bg=BG4, fill=WARN); progress.pack(fill="x")
+            count_var = tk.StringVar(value=f"0 / {qty}")
+            tk.Label(prog_frame, textvariable=count_var, bg=BG, fg=FG3, font=(f, 8)).pack(anchor="e", pady=(3,0))
+            tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+            foot = tk.Frame(win, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
+            fi   = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+            close_h, _ = make_pill_btn(fi, "Tutup", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                       font_size=9, padx=20, pady=6, radius=7)
+            _cancelled = [False]
 
-        cancel_h, _ = make_pill_btn(fi, "\u2715  Cancel", _do_cancel,
-                                    bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
-                                    font_size=9, padx=20, pady=6, radius=7)
-        cancel_h.pack(side="right", pady=8, padx=(0,6))
+            def _do_cancel():
+                _cancelled[0] = True
+                icon_lbl.config(text="\u23f9", fg=WARN)
+                title_lbl.config(
+                    text="Membatalkan\u2026 menunggu copy selesai lalu launch MT yang sudah ter-copy.",
+                    fg=WARN)
+                dir_var.set(""); phase_var.set("")
+                cancel_h.pack_forget()
 
-        def _on_copy_progress(i, total, dst_name):
-            def _upd():
-                title_lbl.config(text=f"Menduplikat {i+1} dari {total}\u2026")
-                count_var.set(f"{i} / {total}")
-                progress.set((i / total) * 0.5 if total > 1 else 0.05)
-                dir_var.set(f"\u2192 {dst_name}")
-            win.after(0, _upd)
+            cancel_h, _ = make_pill_btn(fi, "\u2715  Cancel", _do_cancel,
+                                        bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
+                                        font_size=9, padx=20, pady=6, radius=7)
+            cancel_h.pack(side="right", pady=8, padx=(0,6))
 
-        def _on_launch_progress(j, total, dst_name, exe_name):
-            def _upd():
-                title_lbl.config(text=f"Menjalankan MT {j+1} dari {total}\u2026")
-                count_var.set(f"{j+1} / {total}")
-                progress.set(0.5 + (j / max(total,1)) * 0.5)
-                dir_var.set(f"\u25b6 {dst_name}\\{exe_name}")
-            win.after(0, _upd)
+            def _on_copy_progress(i, total, dst_name):
+                def _upd():
+                    title_lbl.config(text=f"Menyalin {i+1} dari {total}\u2026", fg=FG)
+                    count_var.set(f"{i} / {total}")
+                    progress.set((i / total) * 0.5 if total > 1 else 0.05)
+                    dir_var.set(f"\u2192 {dst_name}")
+                    phase_var.set("Fase 1/2: Menyalin folder\u2026")
+                win.after(0, _upd)
 
-        def _on_finish(done_cnt, total, src_name, all_errors):
-            def _done():
-                if _cancelled[0]: return
-                progress.set(1.0); count_var.set(f"{done_cnt} / {total}"); dir_var.set("")
-                if all_errors:
-                    icon_lbl.config(text="\u26a0", fg=WARN)
-                    title_lbl.config(text=f"Selesai dengan {len(all_errors)} error.", fg=WARN)
-                    dir_lbl.config(text="\n".join(all_errors[:3]), fg=DANGER)
-                else:
-                    icon_lbl.config(text="\u2713", fg=WARN)
-                    title_lbl.config(text=f"{done_cnt} duplikat dibuat & dijalankan. \n Silakan Scan Metatrader", fg=FG)
-                    dir_lbl.config(text="Scan otomatis dijalankan.", fg=FG2)
-                cancel_h.pack_forget(); close_h.pack(side="right", pady=8)
-                self._status(f"Duplikat MT selesai: {done_cnt}/{total} dari {src_name}")
-                self.root.after(800, lambda: self.scan_terminals(silent=True))
-            win.after(0, _done)
+            def _on_launch_progress(j, total, dst_name, exe_name):
+                def _upd():
+                    title_lbl.config(text=f"Menjalankan MT {j+1} dari {total}\u2026", fg=FG)
+                    count_var.set(f"{j+1} / {total}")
+                    progress.set(0.5 + ((j + 1) / max(total, 1)) * 0.5)
+                    dir_var.set(f"\u25b6 {dst_name}\\{exe_name}")
+                    phase_var.set("Fase 2/2: Membuka MetaTrader\u2026")
+                win.after(0, _upd)
 
-        be.run_mt_duplicate_bg(src_folder, base_name, linux_base, qty, mt_type,
-                               _on_copy_progress, _on_launch_progress,
-                               _on_finish, _cancelled)
+            def _on_finish(done_cnt, total, src_name, all_errors, was_cancelled):
+                def _done():
+                    progress.set(1.0); count_var.set(f"{done_cnt} / {total}")
+                    dir_var.set(""); phase_var.set("")
+                    cancel_h.pack_forget(); close_h.pack(side="right", pady=8)
+                    if was_cancelled:
+                        icon_lbl.config(text="\u23f9", fg=WARN)
+                        title_lbl.config(
+                            text=f"Dibatalkan. {done_cnt} duplikat ter-copy & dibuka.", fg=WARN)
+                    elif all_errors:
+                        icon_lbl.config(text="\u26a0", fg=WARN)
+                        title_lbl.config(text=f"Selesai dengan {len(all_errors)} error.", fg=WARN)
+                        dir_lbl.config(text="\n".join(all_errors[:3]), fg=DANGER)
+                    else:
+                        icon_lbl.config(text="\u2713", fg=WARN)
+                        title_lbl.config(
+                            text=f"{done_cnt} duplikat dibuat & dijalankan.\n Silakan Scan Metatrader",
+                            fg=FG)
+                        dir_lbl.config(text="Scan otomatis dijalankan.", fg=FG2)
+                    self._status(f"Duplikat MT selesai: {done_cnt}/{total} dari {src_name}")
+                    self.root.after(800, lambda: self.scan_terminals(silent=True))
+                win.after(0, _done)
+
+            be.run_mt_duplicate_bg(src_folder, base_name, linux_base, qty, mt_type,
+                                   _on_copy_progress, _on_launch_progress,
+                                   _on_finish, _cancelled,
+                                   custom_names=custom_names_list)
+
+        # ── Jika custom nama: tampilkan dialog input nama satu per satu ──
+        if use_custom:
+            custom_names = []
+            _abort = [False]
+
+            def _ask_name(idx, callback):
+                """Tampilkan dialog input nama untuk duplikat ke-idx."""
+                dlg = tk.Toplevel(self.root)
+                dlg.title(f"Nama Duplikat {idx + 1} dari {qty}")
+                dlg.configure(bg=BG); dlg.resizable(False, False)
+                dlg.attributes("-topmost", True)
+                dlg.update_idletasks()
+                rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 210
+                ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 90
+                dlg.geometry(f"420x180+{rx}+{ry}"); dlg.deiconify()
+
+                hdr = tk.Frame(dlg, bg=BG2, height=42); hdr.pack(fill="x"); hdr.pack_propagate(False)
+                hdr_i = tk.Frame(hdr, bg=BG2, padx=16); hdr_i.pack(fill="both", expand=True)
+                tk.Label(hdr_i, text=f"\u270e  Nama Folder Duplikat {idx + 1} / {qty}",
+                         bg=BG2, fg=FG, font=(f, 10, "bold")).pack(side="left", fill="y")
+                tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+
+                body2 = tk.Frame(dlg, bg=BG, padx=20, pady=14); body2.pack(fill="both", expand=True)
+                default_name = f"{base_name} {idx + 2}"
+                tk.Label(body2, text="Nama folder  (kosongkan = nama default)",
+                         bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
+                entry_border = tk.Frame(body2, bg=BORDER2, padx=1, pady=1)
+                entry_border.pack(fill="x", pady=(4, 0))
+                name_entry = tk.Entry(entry_border, bg=BG3, fg=FG, insertbackground=ACCENT,
+                                      relief="flat", font=(fm, 10), highlightthickness=0)
+                name_entry.pack(fill="x", ipady=7, padx=1)
+                name_entry.insert(0, default_name)
+                name_entry.select_range(0, "end")
+                name_entry.focus_set()
+
+                tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+                foot2 = tk.Frame(dlg, bg=BG2, height=44); foot2.pack(fill="x"); foot2.pack_propagate(False)
+                fi2 = tk.Frame(foot2, bg=BG2, padx=12); fi2.pack(fill="both", expand=True)
+
+                def _confirm():
+                    val = name_entry.get().strip() or default_name
+                    dlg.destroy()
+                    callback(val)
+
+                def _cancel_all():
+                    _abort[0] = True
+                    dlg.destroy()
+                    callback(None)
+
+                ok_h, _ = make_pill_btn(fi2, "\u2713  OK", _confirm,
+                                        bg="#0d1a0d", fg=ACCENT3, hover_bg="#142814",
+                                        font_size=9, padx=18, pady=6, radius=7)
+                ok_h.pack(side="right", pady=7, padx=(0,6))
+                cx_h, _ = make_pill_btn(fi2, "\u2715  Batalkan Semua", _cancel_all,
+                                        bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
+                                        font_size=9, padx=14, pady=6, radius=7)
+                cx_h.pack(side="right", pady=7)
+                name_entry.bind("<Return>", lambda _: _confirm())
+                name_entry.bind("<Escape>", lambda _: _cancel_all())
+                try: dlg.grab_set()
+                except Exception: pass
+
+            def _collect_names(idx=0):
+                if _abort[0] or idx >= qty:
+                    if _abort[0]:
+                        return
+                    # Semua nama terkumpul, lanjut ke progress window
+                    _launch_progress_win(custom_names)
+                    return
+                def _got_name(val):
+                    if val is None:  # user batalkan semua
+                        return
+                    custom_names.append(val)
+                    self.root.after(80, lambda: _collect_names(idx + 1))
+                _ask_name(idx, _got_name)
+
+            _collect_names()
+            return  # lanjut dari _launch_progress_win()
+
+        # Mode default (tanpa custom nama) — langsung ke progress
+        _launch_progress_win(None)
 
     # ── Update ────────────────────────────────────────────────────────────────
     def _show_update_popup(self, update_sh):

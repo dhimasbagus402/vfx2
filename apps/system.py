@@ -329,8 +329,15 @@ def run_mt_installer_bg(installer_path: Path, qty: int, base_name: str = "",
 def run_mt_duplicate_bg(src_folder: Path, base_name: str, linux_base: Path,
                         qty: int, mt_type: str,
                         on_copy_progress=None, on_launch_progress=None,
-                        on_finish=None, cancelled_flag: list = None):
-    """Copy src_folder ke linux_base/<base_name> N di background thread."""
+                        on_finish=None, cancelled_flag: list = None,
+                        custom_names: list = None):
+    """Copy src_folder ke linux_base/<nama> N di background thread.
+
+    custom_names: list of str dengan panjang qty — nama folder tiap duplikat.
+                  Jika None atau elemen kosong, pakai nama default "<base_name> N".
+    Launch MT hanya dilakukan SETELAH semua copy selesai, atau terhadap yang
+    sudah ter-copy jika dibatalkan di tengah jalan.
+    """
     if cancelled_flag is None:
         cancelled_flag = [False]
 
@@ -342,8 +349,13 @@ def run_mt_duplicate_bg(src_folder: Path, base_name: str, linux_base: Path,
         for i in range(qty):
             if cancelled_flag[0]:
                 break
-            num      = i + 2
-            dst_name = f"{base_name} {num}"
+
+            # Tentukan nama folder: custom jika ada, default jika tidak
+            if custom_names and i < len(custom_names) and custom_names[i].strip():
+                dst_name = custom_names[i].strip()
+            else:
+                dst_name = f"{base_name} {i + 2}"
+
             dst_path = linux_base / dst_name
             if on_copy_progress:
                 on_copy_progress(i, qty, dst_name)
@@ -361,16 +373,12 @@ def run_mt_duplicate_bg(src_folder: Path, base_name: str, linux_base: Path,
                 done_cnt[0] += 1
                 launched.append(final_path)
             except Exception as e:
-                errors.append(f"[{num}] Copy gagal: {e}")
+                errors.append(f"[{dst_name}] Copy gagal: {e}")
 
-        if cancelled_flag[0]:
-            return
-
+        # Launch semua yang berhasil di-copy (baik selesai semua maupun di-cancel)
         exe_name = "terminal64.exe" if mt_type == "MT5" else "terminal.exe"
         launch_errors = []
         for j, dst_path in enumerate(launched):
-            if cancelled_flag[0]:
-                break
             exe_path = dst_path / exe_name
             if on_launch_progress:
                 on_launch_progress(j, len(launched), dst_path.name, exe_name)
@@ -384,13 +392,12 @@ def run_mt_duplicate_bg(src_folder: Path, base_name: str, linux_base: Path,
                 except Exception as e:
                     launch_errors.append(f"[{dst_path.name}] {e}")
             if j < len(launched) - 1:
-                for _ in range(50):
-                    if cancelled_flag[0]:
-                        break
-                    time.sleep(0.1)
+                time.sleep(0.3)
 
-        if on_finish and not cancelled_flag[0]:
-            on_finish(done_cnt[0], qty, src_folder.name, errors + launch_errors)
+        if on_finish:
+            was_cancelled = cancelled_flag[0]
+            on_finish(done_cnt[0], qty, src_folder.name,
+                      errors + launch_errors, was_cancelled)
 
     threading.Thread(target=_do, daemon=True).start()
 
@@ -665,16 +672,8 @@ def _parse_broker_line(line: str) -> tuple | None:
 
 
 def fetch_broker_list(timeout: int = 10) -> tuple[list, str]:
-    """Fetch dan parse daftar broker dari GitHub raw, selalu fresh tanpa cache.
-
-    GitHub raw dilayani Fastly CDN dengan cache max-age=300 (5 menit).
-    Header Cache-Control dan query string DIABAIKAN CDN karena Vary hanya
-    berisi Authorization dan Accept-Encoding.
-
-    Solusi: kirim Authorization dengan nilai unik tiap request — Fastly
-    memperlakukan setiap nilai Authorization sebagai cache key berbeda
-    sehingga selalu MISS dan selalu ambil dari origin GitHub langsung.
-    Untuk repo public, header ini tidak berpengaruh ke autentikasi.
+    """Fetch dan parse daftar broker dari GitHub.
+    Selalu ambil versi terbaru — bypass HTTP cache dengan header dan query param.
 
     Return:
         (list_of_tuples, error_msg)
@@ -682,9 +681,14 @@ def fetch_broker_list(timeout: int = 10) -> tuple[list, str]:
         — Jika gagal:  ([], pesan_error)
     """
     try:
-        bust = int(time.time() * 1000)   # ms-level, unik tiap request
-        req  = Request(MT_BROKER_LIST_URL, headers={
-            "Authorization": f"bust {bust}",
+        import time as _time
+        # Tambahkan timestamp sebagai query param agar URL selalu unik → tidak di-cache
+        bust = int(_time.time())
+        url  = f"{MT_BROKER_LIST_URL}?nocache={bust}"
+        req  = Request(url, headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma":        "no-cache",
+            "Expires":       "0",
         })
         with urlopen(req, timeout=timeout) as resp:
             text = resp.read().decode("utf-8", errors="replace")
