@@ -97,6 +97,7 @@ class RoundScrollbar(tk.Canvas):
         self._drag       = None
         self._repeat_id  = None
         self._hover_zone = None
+        self._set_id     = None   # debounce id untuk set()
         self.bind("<Configure>",       self._redraw)
         self.bind("<ButtonPress-1>",   self._on_press)
         self.bind("<B1-Motion>",       self._on_drag)
@@ -110,6 +111,13 @@ class RoundScrollbar(tk.Canvas):
     def set(self, first, last):
         self._first = float(first)
         self._last  = float(last)
+        # Debounce: batalkan pending redraw, jadwalkan baru dalam 12 ms
+        if self._set_id:
+            self.after_cancel(self._set_id)
+        self._set_id = self.after(12, self._do_set)
+
+    def _do_set(self):
+        self._set_id = None
         self._redraw()
 
     def _track_y(self):
@@ -413,14 +421,22 @@ class ProgressBar(tk.Canvas):
         self._fill      = fill
         self._track     = bg
         self._pct       = 0.0
+        self._last_pct  = -1.0   # sentinel: paksa redraw pertama kali
         self._redraw_id = None
-        self.bind("<Configure>", self._redraw)
+        self.bind("<Configure>", self._on_configure)
 
     def set(self, pct):
-        self._pct = max(0.0, min(1.0, pct))
-        self._redraw()
+        pct = max(0.0, min(1.0, pct))
+        if pct == self._pct:
+            return                # nilai sama, tidak perlu redraw
+        self._pct = pct
+        self._schedule_redraw()
 
-    def _redraw(self, _=None):
+    def _on_configure(self, _=None):
+        self._last_pct = -1.0    # ukuran berubah, paksa redraw
+        self._schedule_redraw()
+
+    def _schedule_redraw(self):
         if self._redraw_id:
             self.after_cancel(self._redraw_id)
         self._redraw_id = self.after(16, self._do_redraw)
@@ -436,6 +452,7 @@ class ProgressBar(tk.Canvas):
         fw = int(w * self._pct)
         if fw > 0:
             self.create_rectangle(0, 0, fw, h, fill=self._fill, outline="")
+        self._last_pct = self._pct
 
 
 # ── Popup helper ──────────────────────────────────────────────────────────────

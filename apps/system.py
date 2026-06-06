@@ -127,9 +127,9 @@ def extract_file(path: Path, dest_dir: Path) -> tuple[bool, str]:
             if r.returncode == 0:
                 return True, ""
             return False, r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "exit != 0"
-        # fallback: Python zipfile
+        # fallback: Python zipfile (lazy import)
         if path.suffix == ".zip":
-            import zipfile
+            import zipfile  # noqa: PLC0415 — intentional lazy import
             with zipfile.ZipFile(path, "r") as zf:
                 zf.extractall(dest_dir)
             return True, ""
@@ -180,12 +180,23 @@ POPUP_ICONS = {
 
 # ── Installer detection ───────────────────────────────────────────────────────
 def detect_installer_type(exe_path: Path) -> str:
-    """Baca byte header .exe untuk deteksi Inno Setup vs NSIS vs unknown."""
+    """Baca byte header .exe untuk deteksi Inno Setup vs NSIS vs unknown.
+    Hanya baca 8 KB pertama — signature selalu ada di awal file.
+    """
+    _READ_SIZE = 8192
     try:
-        data = exe_path.read_bytes()
-        if b"Inno Setup" in data[:65536]:
+        with exe_path.open("rb") as fh:
+            data = fh.read(_READ_SIZE)
+        if b"Inno Setup" in data:
             return "inno"
-        if b"Nullsoft" in data[:65536] or b"NSIS" in data[:65536]:
+        if b"Nullsoft" in data or b"NSIS" in data:
+            return "nsis"
+        # Fallback: cek sisa sampai 64 KB jika tidak ditemukan di 8 KB pertama
+        with exe_path.open("rb") as fh:
+            data = fh.read(65536)
+        if b"Inno Setup" in data:
+            return "inno"
+        if b"Nullsoft" in data or b"NSIS" in data:
             return "nsis"
     except Exception:
         pass

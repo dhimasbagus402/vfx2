@@ -640,6 +640,7 @@ class MTManager:
 
     def _on_any_scroll(self, first, last):
         first = float(first)
+        last  = float(last)
         self.chk_tree.yview_moveto(first)
         self.cat_tree.yview_moveto(first)
         self.file_tree.yview_moveto(first)
@@ -684,6 +685,8 @@ class MTManager:
         self.chk_tree.heading("chk", text=CHK_CHAR_OFF)
 
         rows = be.scan_terminal_files(t)
+
+        # Batch insert: masukkan semua sekaligus lebih cepat dari satu per satu
         for row_idx, (label, fname, sz, mtime) in enumerate(rows):
             stripe = "row_even" if row_idx % 2 == 0 else "row_odd"
             iid    = f"r{row_idx}"
@@ -745,6 +748,9 @@ class MTManager:
         self._all_checked = not self._all_checked
         self.chk_tree.heading("chk", text=CHK_CHAR_ON if self._all_checked else CHK_CHAR_OFF)
         trees = (self.chk_tree, self.cat_tree, self.file_tree)
+        n = len(all_iids)
+        # Hanya perlu yield ke event loop jika ada banyak baris
+        yield_every = 100 if n > 200 else 0
         if self._all_checked:
             self._checked = set(all_iids)
             for i, iid in enumerate(all_iids):
@@ -753,7 +759,7 @@ class MTManager:
                     cur = tree.item(iid, "tags")
                     if "checked" not in cur:
                         tree.item(iid, tags=(*cur, "checked"))
-                if i % 60 == 59:
+                if yield_every and i % yield_every == yield_every - 1:
                     self.root.update_idletasks()
         else:
             self._checked.clear()
@@ -761,7 +767,7 @@ class MTManager:
                 self.chk_tree.set(iid, "chk", CHK_CHAR_OFF)
                 for tree in trees:
                     tree.item(iid, tags=[tg for tg in tree.item(iid, "tags") if tg != "checked"])
-                if i % 60 == 59:
+                if yield_every and i % yield_every == yield_every - 1:
                     self.root.update_idletasks()
 
     def _update_header_chk(self):
@@ -944,14 +950,15 @@ class MTManager:
         self._clipboard      = targets
         self._clipboard_mode = "cut"
         n = len(targets)
-        # Tandai baris sebagai "cut" (dimmed) dengan tag
-        for _, fname, _ in targets:
-            for iid in self.file_tree.get_children():
-                if self.file_tree.item(iid, "values")[0] == fname:
-                    for tree in (self.chk_tree, self.cat_tree, self.file_tree):
-                        cur = list(tree.item(iid, "tags"))
-                        if "cut_dim" not in cur:
-                            tree.item(iid, tags=(*cur, "cut_dim"))
+        # Buat set nama file untuk lookup O(1)
+        cut_fnames = {fname for _, fname, _ in targets}
+        for iid in self.file_tree.get_children():
+            vals = self.file_tree.item(iid, "values")
+            if vals and vals[0] in cut_fnames:
+                for tree in (self.chk_tree, self.cat_tree, self.file_tree):
+                    cur = list(tree.item(iid, "tags"))
+                    if "cut_dim" not in cur:
+                        tree.item(iid, tags=(*cur, "cut_dim"))
         self._status(f"\u2702 {n} file siap dipindah (Cut).")
 
     def _clipboard_paste(self):
@@ -2570,7 +2577,7 @@ class MTManager:
         iid = self._as_y_to_iid(event.y)
         if iid != self._as_hover_iid:
             self._as_hover_iid = iid
-            self._draw_as_canvas()
+            self._draw_as_canvas()   # sudah ter-debounce via _draw_as_canvas
             self._as_cancel_tooltip()
             if iid is not None:
                 self._as_tooltip_id = self._as_canvas.after(
@@ -2611,19 +2618,20 @@ class MTManager:
 
     def _autostart_sync_poll(self):
         iid_map = getattr(self, "_iid_to_terminal", {})
-        changed = False
-        for iid, was_on in list(self._as_state_cache.items()):
-            if not was_on:
-                continue
-            t = iid_map.get(iid)
-            if t is None:
-                continue
-            now_on = be.autostart_is_on(t)
-            if now_on != was_on:
-                self._as_state_cache[iid] = now_on
-                changed = True
-        if changed:
-            self._draw_as_canvas()
+        # Hanya iterasi jika ada entry yang ON di cache
+        on_entries = [(iid, state) for iid, state in self._as_state_cache.items() if state]
+        if on_entries:
+            changed = False
+            for iid, _ in on_entries:
+                t = iid_map.get(iid)
+                if t is None:
+                    continue
+                now_on = be.autostart_is_on(t)
+                if not now_on:
+                    self._as_state_cache[iid] = False
+                    changed = True
+            if changed:
+                self._draw_as_canvas()
         self.root.after(2000, self._autostart_sync_poll)
 
     # ── Scan terminals ────────────────────────────────────────────────────────
