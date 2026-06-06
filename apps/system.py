@@ -14,7 +14,6 @@ import datetime
 import time
 from pathlib import Path
 from urllib.request import urlopen
-from urllib.error import URLError
 
 __version__ = "1.3"
 
@@ -643,18 +642,14 @@ def wget_download_bg(url: str, dest_dir: Path,
 
 
 # ── MT Broker Download List ───────────────────────────────────────────────────
-# URL raw file di GitHub (gunakan link "raw" bukan halaman HTML)
-_BROKER_LIST_URL = (
+# URL raw GitHub (bukan halaman HTML, tapi link "raw")
+MT_BROKER_LIST_URL = (
     "https://raw.githubusercontent.com/dhimasbagus402/MT-List/main/MT_BROKER_LIST.txt"
 )
 
-# Cache hasil fetch agar tidak fetch ulang setiap kali diakses
-_broker_list_cache: list | None = None
-_broker_list_lock = threading.Lock()
-
 
 def _parse_broker_line(line: str) -> tuple | None:
-    """Parse satu baris format:  MT4|Nama Broker|https://url.exe
+    """Parse satu baris: MT4|Nama Broker|https://url.exe
     Baris kosong atau diawali '#' diabaikan.
     """
     line = line.strip()
@@ -669,99 +664,41 @@ def _parse_broker_line(line: str) -> tuple | None:
     return (versi, nama, url)
 
 
-def _fetch_broker_list_from_url(url: str, timeout: int = 10) -> list | None:
-    """Fetch dan parse daftar broker dari URL. Return list of tuples atau None jika gagal."""
+def fetch_broker_list(timeout: int = 10) -> tuple[list, str]:
+    """Fetch dan parse daftar broker dari GitHub.
+
+    Return:
+        (list_of_tuples, error_msg)
+        — Jika sukses: ([(versi, nama, url), ...], "")
+        — Jika gagal:  ([], pesan_error)
+    """
     try:
-        with urlopen(url, timeout=timeout) as resp:
+        with urlopen(MT_BROKER_LIST_URL, timeout=timeout) as resp:
             text = resp.read().decode("utf-8", errors="replace")
-        result = []
-        for line in text.splitlines():
-            entry = _parse_broker_line(line)
-            if entry:
-                result.append(entry)
-        return result if result else None
-    except Exception:
-        return None
+        result = [_parse_broker_line(line) for line in text.splitlines()]
+        result = [r for r in result if r is not None]
+        if not result:
+            return [], "File broker list kosong atau format tidak dikenali."
+        return result, ""
+    except Exception as e:
+        return [], f"Gagal mengambil daftar broker: {e}"
 
 
-def get_broker_list(force_refresh: bool = False) -> list:
-    """Kembalikan daftar broker. Fetch dari GitHub, fallback ke list bawaan jika gagal."""
-    global _broker_list_cache
-    with _broker_list_lock:
-        if _broker_list_cache is not None and not force_refresh:
-            return _broker_list_cache
-        fetched = _fetch_broker_list_from_url(_BROKER_LIST_URL)
-        if fetched:
-            _broker_list_cache = fetched
-            return _broker_list_cache
-        # Fallback ke list hardcoded jika URL tidak bisa diakses
-        _broker_list_cache = _MT_BROKER_LIST_FALLBACK
-        return _broker_list_cache
+def fetch_broker_list_bg(on_done, on_error):
+    """Fetch daftar broker di background thread.
 
-
-def refresh_broker_list_bg(on_done=None, on_error=None):
-    """Fetch ulang daftar broker di background thread.
-    on_done(broker_list) dipanggil jika berhasil.
-    on_error(msg) dipanggil jika gagal.
+    Callbacks (dipanggil dari background — caller wajib root.after() ke main thread):
+      on_done(broker_list)  — list of (versi, nama, url)
+      on_error(msg)         — string pesan error
     """
     def _run():
-        global _broker_list_cache
-        fetched = _fetch_broker_list_from_url(_BROKER_LIST_URL)
-        if fetched:
-            with _broker_list_lock:
-                _broker_list_cache = fetched
-            if on_done:
-                on_done(fetched)
+        result, err = fetch_broker_list()
+        if result:
+            on_done(result)
         else:
-            if on_error:
-                on_error("Gagal mengambil daftar broker dari GitHub.")
+            on_error(err)
     threading.Thread(target=_run, daemon=True).start()
 
-
-# ── Fallback list (dipakai jika URL tidak bisa diakses) ──────────────────────
-_MT_BROKER_LIST_FALLBACK = [
-    # (versi, nama_tampil, url)
-    # ── MT4 ──
-    ("MT4", "FBS",          "https://download.mql5.com/cdn/web/fbs.markets.inc/mt4/fbs4setup.exe"),
-    ("MT4", "XM Global",    "https://download.mql5.com/cdn/web/xm.global.limited/mt4/xmglobal4setup.exe"),
-    ("MT4", "Tickmill",     "https://download.mql5.com/cdn/web/17409/mt4/tickmill4setup.exe"),
-    ("MT4", "JustForex",    "https://download.mql5.com/cdn/web/just.global.markets/mt4/justmarkets4setup.exe"),
-    ("MT4", "Weltrade",     "https://download.mql5.com/cdn/web/systemgates.limited/mt4/weltrade4setup.exe"),
-    ("MT4", "InstaForex",   "https://www.instaforex.com/downloads/itc4setup.exe"),
-    ("MT4", "OctaFX",       "https://download.mql5.com/cdn/web/octa.markets.incorporated/mt4/octafx4setup.exe"),
-    ("MT4", "Headway",      "https://download.mql5.com/cdn/web/jarocel.pty.ltd/mt4/headway4setup.exe"),
-    ("MT4", "Exness",       "https://download.metatrader.com/cdn/web/exness.technologies.ltd/mt4/exness4setup.exe"),
-    ("MT4", "HFM",          "https://download.mql5.com/cdn/web/7399/mt4/hfmarketssv4setup.exe"),
-    ("MT4", "IC Markets",   "https://download.mql5.com/cdn/web/18036/mt4/icmarketssc4setup.exe"),
-    ("MT4", "FXTM",         "https://download.mql5.com/cdn/web/16626/mt4/forextimefxtm4setup.exe"),
-    ("MT4", "Pepperstone",  "https://download.mql5.com/cdn/web/pepperstone.group.limited/mt4/pepperstone4setup.exe"),
-    ("MT4", "CXM Direct",   "https://download.mql5.com/cdn/web/16845/mt4/cxmdirect4setup.exe"),
-    ("MT4", "FX Clearing",  "https://download.mql5.com/cdn/web/fxcl.markets.ltd/mt4/fxcl4setup.exe"),
-    ("MT4", "AximTrade",    "https://download.mql5.com/cdn/web/18441/mt4/aximtrade2setup.exe"),
-    ("MT4", "Vantage",      "https://download.metatrader.com/cdn/web/14009/mt4/vantageinternational4setup.exe"),
-    # ── MT5 ──
-    ("MT5", "FBS",          "https://download.mql5.com/cdn/web/fbs.markets.inc/mt5/fbs5setup.exe"),
-    ("MT5", "XM Global",    "https://download.mql5.com/cdn/web/xm.global.limited/mt5/xmglobal5setup.exe"),
-    ("MT5", "Tickmill",     "https://download.mql5.com/cdn/web/19497/mt5/tickmill5setup.exe"),
-    ("MT5", "JustForex",    "https://download.mql5.com/cdn/web/just.global.markets/mt5/justmarkets5setup.exe"),
-    ("MT5", "Weltrade",     "https://download.mql5.com/cdn/web/systemgates.limited/mt5/weltrade5setup.exe"),
-    ("MT5", "InstaForex",   "https://download.mql5.com/cdn/web/instafintech.ltd/mt5/instaforex5setup.exe"),
-    ("MT5", "OctaFX",       "https://download.mql5.com/cdn/web/instafintech.ltd/mt5/instaforex5setup.exe"),
-    ("MT5", "Exness",       "https://download.metatrader.com/cdn/web/exness.technologies.ltd/mt5/exness5setup.exe"),
-    ("MT5", "Headway",      "https://download.mql5.com/cdn/web/jarocel.pty.ltd/mt5/headway5setup.exe"),
-    ("MT5", "HFM",          "https://download.mql5.com/cdn/web/12018/mt5/hfmarketsglobal5setup.exe"),
-    ("MT5", "IC Markets",   "https://download.mql5.com/cdn/web/18040/mt5/icmarketssc5setup.exe"),
-    ("MT5", "FXTM",         "https://download.mql5.com/cdn/web/16628/mt5/forextimefxtm5setup.exe"),
-    ("MT5", "Pepperstone",  "https://download.mql5.com/cdn/web/pepperstone.group.limited/mt5/pepperstone5setup.exe"),
-    ("MT5", "CXM Direct",   "https://download.mql5.com/cdn/web/22250/mt5/cxmdirect5setup.exe"),
-    ("MT5", "ThinkMarkets", "https://download.mql5.com/cdn/web/tf.global.markets/mt4/thinkmarkets4setup.exe"),
-    ("MT5", "Deriv",        "https://download.mql5.com/cdn/web/deriv.com.limited/mt5/deriv5setup.exe"),
-    ("MT5", "Vantage",      "https://download.metatrader.com/cdn/web/14111/mt5/vantageinternational5setup.exe"),
-    ("MT5", "MT5 Umum",     "https://download.mql5.com/cdn/web/metaquotes.ltd/mt5/mt5setup.exe"),
-]
-
-# Alias untuk kompatibilitas mundur (jika ada kode lain yang pakai MT_BROKER_LIST langsung)
-MT_BROKER_LIST = _MT_BROKER_LIST_FALLBACK
 
 
 def wget_then_install_bg(url: str, dest_dir: Path, broker_name: str,

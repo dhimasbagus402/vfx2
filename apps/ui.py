@@ -26,7 +26,7 @@ from system import (
     AS_COL_WIDTH, AS_TRACK_W, AS_TRACK_H, AS_THUMB_R,
     AS_COLOR_ON, AS_COLOR_OFF, AS_THUMB_COL,
     CHK_COL_WIDTH, CHK_FONT_SIZE, CHK_CHAR_OFF, CHK_CHAR_ON,
-    TABLE_ROW_HEIGHT, DOCS_DIR, MT_BROKER_LIST,
+    TABLE_ROW_HEIGHT, DOCS_DIR,
 )
 
 
@@ -1722,12 +1722,53 @@ class MTManager:
                     child.bind(ev, _do_scroll, add=True)
                 _rebind_scroll(child)
 
+        # ── Fetch broker list dari GitHub saat window dibuka ──
+        _broker_data = [None]   # None = belum fetch, [] = gagal, [...] = sukses
+
+        def _show_loading():
+            for w in broker_inner.winfo_children():
+                w.destroy()
+            fr = tk.Frame(broker_inner, bg=BG)
+            fr.pack(expand=True, pady=40)
+            tk.Label(fr, text="\u29d7  Mengambil daftar broker dari GitHub\u2026",
+                     bg=BG, fg=FG3, font=(f, 10)).pack()
+
+        def _show_error(msg):
+            for w in broker_inner.winfo_children():
+                w.destroy()
+            fr = tk.Frame(broker_inner, bg=BG)
+            fr.pack(expand=True, pady=40)
+            tk.Label(fr, text="\u26a0  Gagal memuat daftar broker",
+                     bg=BG, fg=WARN, font=(f, 10, "bold")).pack()
+            tk.Label(fr, text=msg, bg=BG, fg=FG3, font=(f, 9),
+                     wraplength=420, justify="center").pack(pady=(4, 12))
+            retry_h, _ = make_pill_btn(fr, "\u21ba  Coba Lagi", _start_fetch,
+                                        bg=BG3, fg=FG, hover_bg=BG4,
+                                        font_size=9, padx=16, pady=6, radius=7)
+            retry_h.pack()
+
+        def _start_fetch():
+            _broker_data[0] = None
+            _show_loading()
+            def _on_done(data):
+                _broker_data[0] = data
+                win.after(0, _build_broker_list)
+            def _on_err(msg):
+                _broker_data[0] = []
+                win.after(0, lambda: _show_error(msg))
+            be.fetch_broker_list_bg(_on_done, _on_err)
+
         def _build_broker_list(*_):
+            data = _broker_data[0]
+            if data is None:
+                return   # masih loading
+            if data == []:
+                return   # error sudah ditampilkan
             for w in broker_inner.winfo_children():
                 w.destroy()
             ver    = ver_var.get()
             search = search_var.get().strip().lower()
-            brokers = [b for b in be.MT_BROKER_LIST
+            brokers = [b for b in data
                        if (ver == "Semua" or b[0] == ver)
                        and (not search or search in b[1].lower())]
             if not brokers:
@@ -1762,7 +1803,6 @@ class MTManager:
                 def _enter(e, c=card, bl=badge_lbl, bc=badge_col):
                     for w in _all_widgets(c):
                         if w is bl:
-                            # Badge tetap warna aslinya, hanya perkecil opacity
                             try: w.config(bg=bc)
                             except Exception: pass
                         else:
@@ -1791,7 +1831,8 @@ class MTManager:
 
             win.after(10, _on_broker_configure)
 
-        win.after(50, _build_broker_list)
+        # Mulai fetch otomatis saat window terbuka
+        win.after(50, _start_fetch)
 
         # ── Konfirmasi download ──
         def _confirm_download(version, name, url):
@@ -1975,7 +2016,7 @@ class MTManager:
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
         status_frame = tk.Frame(win, bg=BG2, padx=14, pady=5)
         status_frame.pack(fill="x")
-        status_var = tk.StringVar(value="Pilih broker untuk mengunduh dan menginstall otomatis.")
+        status_var = tk.StringVar(value="Pilih broker untuk menginstall.")
         status_lbl = tk.Label(status_frame, textvariable=status_var,
                               bg=BG2, fg=FG3, font=(f, 9), anchor="w")
         status_lbl.pack(side="left", fill="x", expand=True)
