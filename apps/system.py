@@ -665,8 +665,16 @@ def _parse_broker_line(line: str) -> tuple | None:
 
 
 def fetch_broker_list(timeout: int = 10) -> tuple[list, str]:
-    """Fetch dan parse daftar broker dari GitHub.
-    Selalu ambil versi terbaru — bypass HTTP cache dengan header dan query param.
+    """Fetch dan parse daftar broker dari GitHub raw, selalu fresh tanpa cache.
+
+    GitHub raw dilayani Fastly CDN dengan cache max-age=300 (5 menit).
+    Header Cache-Control dan query string DIABAIKAN CDN karena Vary hanya
+    berisi Authorization dan Accept-Encoding.
+
+    Solusi: kirim Authorization dengan nilai unik tiap request — Fastly
+    memperlakukan setiap nilai Authorization sebagai cache key berbeda
+    sehingga selalu MISS dan selalu ambil dari origin GitHub langsung.
+    Untuk repo public, header ini tidak berpengaruh ke autentikasi.
 
     Return:
         (list_of_tuples, error_msg)
@@ -674,14 +682,9 @@ def fetch_broker_list(timeout: int = 10) -> tuple[list, str]:
         — Jika gagal:  ([], pesan_error)
     """
     try:
-        import time as _time
-        # Tambahkan timestamp sebagai query param agar URL selalu unik → tidak di-cache
-        bust = int(_time.time())
-        url  = f"{MT_BROKER_LIST_URL}?nocache={bust}"
-        req  = Request(url, headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma":        "no-cache",
-            "Expires":       "0",
+        bust = int(time.time() * 1000)   # ms-level, unik tiap request
+        req  = Request(MT_BROKER_LIST_URL, headers={
+            "Authorization": f"bust {bust}",
         })
         with urlopen(req, timeout=timeout) as resp:
             text = resp.read().decode("utf-8", errors="replace")
