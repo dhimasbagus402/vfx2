@@ -560,7 +560,10 @@ class MTManager:
                  font=(self._font_mono, 8)).pack(side="left", padx=(8, 0))
         self._disk_free_bytes  = 0
         self._disk_total_bytes = 0
-        self._disk_tooltip = Tooltip(disk_fr, "Disk: belum diukur")
+        # Bind tooltip ke disk_fr + semua child-nya agar area hover lebih luas
+        self._disk_tooltips = [Tooltip(disk_fr, "Disk: belum diukur", delay=150)]
+        for _w in disk_fr.winfo_children():
+            self._disk_tooltips.append(Tooltip(_w, "Disk: belum diukur", delay=150))
 
         self.auto_update_var = tk.BooleanVar(value=self._cfg.get("auto_update", True))
 
@@ -597,7 +600,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -657,8 +660,9 @@ class MTManager:
             self._disk_bar._fill = BORDER2
             self._disk_bar._pct  = -1.0
             self._disk_bar.set(0.0)
-            if hasattr(self, "_disk_tooltip"):
-                self._disk_tooltip.text = "Disk: tidak tersedia"
+            if hasattr(self, "_disk_tooltips"):
+                for _t in self._disk_tooltips:
+                    _t.text = "Disk: tidak tersedia"
             return
         free_frac = free / total
         used = total - free
@@ -673,13 +677,15 @@ class MTManager:
         self._disk_bar._pct  = -1.0          # paksa redraw dengan warna baru
         self._disk_bar.set(1.0 - free_frac)
         self._disk_var.set(f"{be.fmt_disk(free)} free / {be.fmt_disk(total)}")
-        if hasattr(self, "_disk_tooltip"):
-            self._disk_tooltip.text = (
+        if hasattr(self, "_disk_tooltips"):
+            _tip = (
                 f"Free  : {to_kb(free)}\n"
                 f"Used  : {to_kb(used)}\n"
                 f"Total : {to_kb(total)}\n"
-                f"Usage : {free_frac * 100:.1f}% free"
+                f"Usage : {(1 - free_frac) * 100:.1f}% used"
             )
+            for _t in self._disk_tooltips:
+                _t.text = _tip
 
     def _disk_poll(self):
         t = self._terminal(silent=True)
@@ -2548,7 +2554,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")
