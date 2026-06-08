@@ -10,6 +10,7 @@ import tkinter.font as tkf
 from tkinter import ttk
 from pathlib import Path
 import shutil
+import webbrowser
 
 import system as be
 from widgets import (
@@ -56,6 +57,7 @@ class MTManager:
         self._build_styles()
         self._build_ui()
         self.scan_terminals(silent=True)
+        self.root.after(400, self._disk_poll)
         self.root.after(2000, self._autostart_sync_poll)
         if self.auto_update_var.get():
             self.root.after(800, self._auto_update_check)
@@ -128,7 +130,7 @@ class MTManager:
         title_frame.pack(side="left", padx=10, fill="y")
         tk.Label(title_frame, text="MetaTrader", bg=BG2, fg=ACCENT,
                  font=(f, 11, "bold")).pack(side="left")
-        tk.Label(title_frame, text=" Manager \u2014 Linux Edition",
+        tk.Label(title_frame, text=" Manager \u2014 digiOS Edition",
                  bg=BG2, fg=FG2, font=(f, 11)).pack(side="left")
         tk.Label(title_frame, text=f"  v{__version__}",
                  bg=BG2, fg=FG3, font=(f, 9)).pack(side="left", pady=(2, 0))
@@ -203,13 +205,13 @@ class MTManager:
         mt_wrap = tk.Frame(sidebar, bg=BG2, padx=10)
         mt_wrap.pack(fill="x", pady=(0, 12))
         mt_holder, _mt_canvas = make_pill_btn(
-            mt_wrap, "\u2699  Tambah / Kelola MT", self._manage_mt_menu,
+            mt_wrap, "\u2699  Add / Remove MT", self._manage_mt_menu,
             bg=BG3, fg="#5ecf3e", hover_bg=BG4,
             font_size=10, padx=12, pady=8, radius=8, fill_x=True)
         mt_holder.pack(fill="x")
         self._manage_mt_btn_holder = mt_holder
         self._install_mt_btn_holder = mt_holder   # legacy alias
-        Tooltip(_mt_canvas, "Install, Duplicate, atau Uninstall MetaTrader",
+        Tooltip(_mt_canvas, "Install, Duplicate, or Uninstall MetaTrader",
                 position="above")
 
         # ── MAIN PANEL ────────────────────────────────────────────────────────
@@ -225,7 +227,7 @@ class MTManager:
         tb.pack(fill="both", expand=True)
 
         _btns = [
-            ("\u2699 EA / Indicator", self._manage_ea_menu,
+            ("\u2699 Manage EA / Indicator", self._manage_ea_menu,
              ACCENT_DIM, ACCENT, "#1d2b36"),
             ("\u2692 Utility", self._utility_menu, "#261a05", WARN, "#3d2a08"),
             None,  # separator
@@ -233,10 +235,10 @@ class MTManager:
             ("\u25b6 Open MT", self.open_mt, "#0d2200", "#5ecf3e", "#1a3a00"),
         ]
         _tooltips = {
-            "\u2699 EA / Indicator": "Install atau hapus EA / Indikator pada MT",
-            "\u2692 Utility": "Clear Logs dan buka MetaEditor",
-            "\u25a6 Browse": "Buka data Folder MT",
-            "\u25b6 Open MT": "Jalankan terminal MT yang dipilih",
+            "\u2699 Manage EA / Indicator": "Install or remove EA / Indicator on MT",
+            "\u2692 Utility": "Clear Logs and open MetaEditor",
+            "\u25a6 Browse": "Open MT data folder",
+            "\u25b6 Open MT": "Run the selected MT terminal",
         }
 
         for item in _btns:
@@ -247,7 +249,7 @@ class MTManager:
             h, c = make_pill_btn(tb, lbl, cmd, bg=bg_, fg=fg_, hover_bg=hbg,
                                   font_size=10, padx=12, pady=7, radius=10)
             h.pack(side="left", pady=8, padx=2)
-            if lbl == "\u2699 EA / Indicator":
+            if lbl == "\u2699 Manage EA / Indicator":
                 self._manage_ea_btn_holder = h
                 self._install_btn_holder = h   # legacy alias
                 self._install_btn_canvas = c
@@ -270,6 +272,25 @@ class MTManager:
         info_card.pack(fill="x", padx=1, pady=1)
 
         self._info_fields = {}
+
+        # ── Autostart control (untuk terminal yang sedang dipilih) ──
+        as_col = tk.Frame(info_card, bg=BG2)
+        as_col.pack(side="right", padx=(28, 0))
+        tk.Label(as_col, text="AUTOSTART ON BOOT", bg=BG2, fg=FG3,
+                 font=(f, 8), anchor="e").pack(anchor="e")
+        as_row = tk.Frame(as_col, bg=BG2)
+        as_row.pack(anchor="e", pady=(2, 0))
+        self._as_switch = tk.Canvas(as_row, width=38, height=18, bg=BG2,
+                                    highlightthickness=0, cursor="hand2")
+        self._as_switch.pack(side="left")
+        self._as_switch.bind("<Button-1>", self._toggle_selected_autostart)
+        self._as_switch_lbl = tk.Label(as_row, text="—", bg=BG2, fg=FG3,
+                                       font=(f, 10, "bold"))
+        self._as_switch_lbl.pack(side="left", padx=(8, 0))
+        Tooltip(self._as_switch,
+                "Run this terminal automatically when the system/VPS boots")
+        self._draw_as_switch(False, enabled=False)
+
         for key, label, default in [
             ("terminal", "TERMINAL", "—"),
             ("type",     "TYPE",     "—"),
@@ -281,8 +302,9 @@ class MTManager:
                      font=(f, 8), anchor="w").pack(anchor="w")
             var   = tk.StringVar(value=default)
             color = FG if key == "type" else (ACCENT if key == "path" else FG)
+            vfont = (fm, 10) if key == "path" else (f, 10, "bold")
             lbl   = tk.Label(col, textvariable=var, bg=BG2, fg=color,
-                             font=(f, 10, "bold"), anchor="w")
+                             font=vfont, anchor="w")
             lbl.pack(anchor="w")
             self._info_fields[key] = (var, lbl)
 
@@ -320,7 +342,7 @@ class MTManager:
         self.chk_tree.pack(side="left", fill="y")
         self.chk_tree.tag_configure("row_even", background=BG3)
         self.chk_tree.tag_configure("row_odd",  background=BG4)
-        self.chk_tree.tag_configure("checked",  background=ACCENT_DIM)
+        self.chk_tree.tag_configure("checked",  background=ACCENT_DIM, foreground=ACCENT3)
         self.chk_tree.tag_configure("cut_dim",  foreground=FG3)
 
         self.cat_tree = ttk.Treeview(tbl_box.inner, columns=("cat",), show="headings",
@@ -338,7 +360,7 @@ class MTManager:
         self.cat_tree.tag_configure("cut_dim",  foreground=FG3)
 
         self.file_tree = ttk.Treeview(tbl_box.inner,
-                                       columns=("name", "type", "size", "modified"),
+                                       columns=("name", "size", "modified"),
                                        show="headings", selectmode="browse",
                                        style="App.Treeview",
                                        yscrollcommand=self._on_file_scroll)
@@ -469,7 +491,7 @@ class MTManager:
             except Exception:
                 text = ""
             if not text:
-                self.wget_status_var.set("Clipboard kosong.")
+                self.wget_status_var.set("Clipboard is empty.")
                 return
             # Bersihkan placeholder lalu set teks
             _focus_in(None)
@@ -485,7 +507,7 @@ class MTManager:
                                           bg=BG3, fg=FG, hover_bg=BG4,
                                           font_size=10, padx=12, pady=7, radius=7)
         paste_h.pack(side="left", padx=(0, 6))
-        Tooltip(paste_c, "Paste URL dari clipboard ke kolom input", position="above")
+        Tooltip(paste_c, "Paste URL from clipboard into the input field", position="above")
 
         dl_h, _ = make_pill_btn(row1, "\u2193 Download", self.wget_download,
                                  bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
@@ -522,8 +544,21 @@ class MTManager:
         sb_inner = tk.Frame(status_bar, bg=BG2, padx=10)
         sb_inner.pack(fill="both", expand=True)
 
-        self.status_var = tk.StringVar(value="Tekan Scan untuk mendeteksi terminal.")
+        self.status_var = tk.StringVar(value="Press Scan to detect terminals.")
         self._mk_status_item(sb_inner, "0 terminal", ACCENT, dot=True, varname="_term_count_var")
+
+        # ── Disk space (drive terminal terpilih, fallback home) ──
+        disk_fr = tk.Frame(sb_inner, bg=BG2)
+        disk_fr.pack(side="left", padx=(6, 0), fill="y")
+        tk.Label(disk_fr, text="DISK", bg=BG2, fg=FG3,
+                 font=(self._font, 8)).pack(side="left", padx=(0, 6), pady=10)
+        self._disk_bar = ProgressBar(disk_fr, height=6, bg=BORDER2, fill=ACCENT3)
+        self._disk_bar.config(width=70)
+        self._disk_bar.pack(side="left", pady=11)
+        self._disk_var = tk.StringVar(value="—")
+        tk.Label(disk_fr, textvariable=self._disk_var, bg=BG2, fg=FG3,
+                 font=(self._font_mono, 8)).pack(side="left", padx=(8, 0))
+        Tooltip(disk_fr, "Sisa ruang disk pada drive terminal terpilih")
 
         self.auto_update_var = tk.BooleanVar(value=self._cfg.get("auto_update", True))
 
@@ -562,10 +597,10 @@ class MTManager:
         def _run_update(_=None):
             update_sh = Path.home() / "vfx2" / "update.sh"
             if not update_sh.exists():
-                themed_popup(self.root, "error", "Update Gagal",
-                    f"Script tidak ditemukan:\n{update_sh}")
+                themed_popup(self.root, "error", "Update Failed",
+                    f"Script not found:\n{update_sh}")
                 return
-            self._status("Menjalankan update...")
+            self._status("Running update...")
             self._show_update_popup(update_sh)
 
         update_c.bind("<Configure>", lambda e: _draw_update_btn())
@@ -578,6 +613,16 @@ class MTManager:
         _rw   = _fnt2.measure("\u21ba  Update") + 10 * 2
         _rh2  = _fnt2.metrics("linespace") + 3 * 2
         update_c.config(width=_rw, height=_rh2)
+
+        # \u2500\u2500 Branding: digitalku.com (clickable) \u2500\u2500
+        brand = tk.Label(sb_inner, text="digitalku.com", bg=BG2, fg=FG3,
+                         font=(self._font, 8), cursor="hand2")
+        brand.pack(side="right", padx=(0, 14), fill="y")
+        brand.bind("<Button-1>",
+                   lambda e: webbrowser.open("https://www.digitalku.com"))
+        brand.bind("<Enter>", lambda e: brand.config(fg=ACCENT))
+        brand.bind("<Leave>", lambda e: brand.config(fg=FG3))
+        Tooltip(brand, "Open https://www.digitalku.com", position="above")
 
     # ── Status helpers ────────────────────────────────────────────────────────
     def _mk_status_item(self, parent, text, color, dot=False, icon=None,
@@ -601,6 +646,31 @@ class MTManager:
     def _status(self, msg):
         self.status_var.set(msg)
 
+    def _refresh_disk(self, path=None):
+        free, total = be.disk_usage(path)
+        if total <= 0:
+            self._disk_var.set("—")
+            self._disk_bar._fill = BORDER2
+            self._disk_bar._pct  = -1.0
+            self._disk_bar.set(0.0)
+            return
+        free_frac = free / total
+        if free_frac < 0.10:
+            color = DANGER
+        elif free_frac < 0.20:
+            color = WARN
+        else:
+            color = ACCENT3
+        self._disk_bar._fill = color
+        self._disk_bar._pct  = -1.0          # paksa redraw dengan warna baru
+        self._disk_bar.set(1.0 - free_frac)
+        self._disk_var.set(f"{be.fmt_disk(free)} free / {be.fmt_disk(total)}")
+
+    def _disk_poll(self):
+        t = self._terminal(silent=True)
+        self._refresh_disk(t["path"] if t else None)
+        self.root.after(60000, self._disk_poll)
+
     def _draw_scan_btn(self, _=None, hover=False):
         c = self._scan_canvas
         c.delete("all")
@@ -615,7 +685,7 @@ class MTManager:
         pts2 = [r+1,1, w-r-1,1, w-1,1, w-1,r+1, w-1,h-r-1, w-1,h-1,
                 w-r-1,h-1, r+1,h-1, 1,h-1, 1,h-r-1, 1,r+1, 1,1, r+1,1]
         c.create_polygon(pts2, smooth=True, fill=bg, outline="")
-        c.create_text(w//2, h//2, text="\u25ce  Scan Metatrader",
+        c.create_text(w//2, h//2, text="\u25ce  Scan MetaTrader",
                       fill=ACCENT, font=(self._font, 9, "bold"))
 
     # ── Scroll sync ───────────────────────────────────────────────────────────
@@ -674,6 +744,8 @@ class MTManager:
         if path_str.startswith(home):
             path_str = "~" + path_str[len(home):]
         self._info_fields["path"][0].set(path_str)
+        self._refresh_disk(t["path"])
+        self._update_as_switch(t)
         self._status(f"Path: {t['path']}")
 
     # ── File list ─────────────────────────────────────────────────────────────
@@ -690,25 +762,24 @@ class MTManager:
         for row_idx, (label, fname, sz, mtime) in enumerate(rows):
             stripe = "row_even" if row_idx % 2 == 0 else "row_odd"
             iid    = f"r{row_idx}"
-            ext    = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
             self.chk_tree.insert("", "end", iid=iid, values=(CHK_CHAR_OFF,), tags=(stripe,))
             self.cat_tree.insert("", "end", iid=iid, values=(label,), tags=(label, stripe))
             self.file_tree.insert("", "end", iid=iid,
-                values=(fname, f".{ext}" if ext else "", sz, mtime), tags=(stripe,))
+                values=(fname, sz, mtime), tags=(stripe,))
 
     # ── Terminal helper ───────────────────────────────────────────────────────
     def _terminal(self, silent=False):
         sel = self.term_tree.selection()
         if not sel:
             if not silent:
-                themed_popup(self.root, "warning", "Perhatian",
-                              "Pilih terminal terlebih dahulu.")
+                themed_popup(self.root, "warning", "Notice",
+                              "Please select a terminal first.")
             return None
         iid  = sel[0]
         item = self.term_tree.item(iid)
         if "group" in item.get("tags", ()):
             if not silent:
-                themed_popup(self.root, "warning", "Perhatian", "Pilih terminal, bukan grup.")
+                themed_popup(self.root, "warning", "Notice", "Please select a terminal, not a group.")
             return None
         return getattr(self, "_iid_to_terminal", {}).get(iid)
 
@@ -942,7 +1013,7 @@ class MTManager:
         self._clipboard      = targets
         self._clipboard_mode = "copy"
         n = len(targets)
-        self._status(f"\u29c9 {n} file disalin ke clipboard.")
+        self._status(f"\u29c9 {n} file(s) copied to clipboard.")
 
     def _clipboard_cut(self, targets):
         if not targets:
@@ -959,7 +1030,7 @@ class MTManager:
                     cur = list(tree.item(iid, "tags"))
                     if "cut_dim" not in cur:
                         tree.item(iid, tags=(*cur, "cut_dim"))
-        self._status(f"\u2702 {n} file siap dipindah (Cut).")
+        self._status(f"\u2702 {n} file(s) ready to move (Cut).")
 
     def _clipboard_paste(self):
         """Paste file clipboard ke folder kategori yang sesuai di terminal aktif."""
@@ -980,7 +1051,7 @@ class MTManager:
         for src_path, fname, cat in items:
             dst_folder = self._folder_for(t, cat)
             if dst_folder is None:
-                errors.append(f"{fname}: kategori '{cat}' tidak dikenal"); continue
+                errors.append(f"{fname}: unknown category '{cat}'"); continue
             dst_folder.mkdir(parents=True, exist_ok=True)
             dst = dst_folder / fname
 
@@ -1013,9 +1084,9 @@ class MTManager:
 
         # Status
         parts = []
-        if done:    parts.append(f"{done} file {'dipindah' if mode == 'cut' else 'disalin'}")
+        if done:    parts.append(f"{done} file(s) {'moved' if mode == 'cut' else 'copied'}")
         if skipped: parts.append(f"{len(skipped)} dilewati (folder sama)")
-        if errors:  parts.append(f"{len(errors)} gagal")
+        if errors:  parts.append(f"{len(errors)} failed")
         self._status(" · ".join(parts) + f" \u2192 {t['name']}")
 
         # Popup hasil
@@ -1028,26 +1099,26 @@ class MTManager:
         ok  = not errors
         icon_ch = "\u2713" if ok else "\u26a0"
         icon_fg = "#5ecf3e" if ok else WARN
-        action  = "dipindah" if mode == "cut" else "disalin"
+        action  = "moved" if mode == "cut" else "copied"
 
         res = tk.Toplevel(self.root)
-        res.title("Paste Selesai"); res.configure(bg=BG)
+        res.title("Paste Complete"); res.configure(bg=BG)
         res.resizable(False, False); res.attributes("-topmost", True)
 
         hdr = tk.Frame(res, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
         hdr_i = tk.Frame(hdr, bg=BG2, padx=20); hdr_i.pack(fill="both", expand=True)
-        tk.Label(hdr_i, text=f"{icon_ch}  Paste Selesai",
+        tk.Label(hdr_i, text=f"{icon_ch}  Paste Complete",
                  bg=BG2, fg=icon_fg, font=(f, 12, "bold")).pack(side="left", fill="y")
         tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
 
         body = tk.Frame(res, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
         tk.Label(body, text=icon_ch, bg=BG, fg=icon_fg,
                  font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0, 16), sticky="n")
-        tk.Label(body, text=f"{done} file berhasil {action}.",
+        tk.Label(body, text=f"{done} file(s) {action} successfully.",
                  bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
         detail_lines = []
         if skipped:
-            detail_lines.append(f"\u2014 {len(skipped)} dilewati (folder sumber = tujuan)")
+            detail_lines.append(f"\u2014 {len(skipped)} skipped (source = destination folder)")
         if errors:
             detail_lines += [f"\u2717 {e}" for e in errors[:4]]
         if detail_lines:
@@ -1072,7 +1143,7 @@ class MTManager:
         if not t:
             return
         DOCS_DIR.mkdir(exist_ok=True)
-        fp = be.yad_pick_file(title=f"Pilih file {label}",
+        fp = be.yad_pick_file(title=f"Select {label} file",
                               filetypes=["*.ex4", "*.ex5", "*.mq4", "*.mq5"],
                               start_dir=DOCS_DIR, root_widget=self.root)
         if not fp:
@@ -1082,24 +1153,24 @@ class MTManager:
         dest = dst / Path(fp).name
         shutil.copy(fp, dest)
         self._reload_files(t)
-        self._status(f"'{dest.name}' berhasil diinstall \u2192 {dst}")
+        self._status(f"'{dest.name}' installed successfully \u2192 {dst}")
         self._popup_install_result(label, dst)
 
     def _popup_install_result(self, label, dst):
         f  = self._font
         fm = self._font_mono
         res = tk.Toplevel(self.root)
-        res.title("Install Berhasil"); res.configure(bg=BG)
+        res.title("Install Successful"); res.configure(bg=BG)
         res.resizable(False, False); res.attributes("-topmost", True)
         hdr_r = tk.Frame(res, bg=BG2, height=48); hdr_r.pack(fill="x"); hdr_r.pack_propagate(False)
         hdr_ri = tk.Frame(hdr_r, bg=BG2, padx=20); hdr_ri.pack(fill="both", expand=True)
-        tk.Label(hdr_ri, text="\u2713  Install Berhasil",
+        tk.Label(hdr_ri, text="\u2713  Install Successful",
                  bg=BG2, fg="#5ecf3e", font=(f, 12, "bold")).pack(side="left", fill="y")
         tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
         body_r = tk.Frame(res, bg=BG, padx=24, pady=18); body_r.pack(fill="both", expand=True)
         tk.Label(body_r, text="\u2713", bg=BG, fg="#5ecf3e",
                  font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
-        tk.Label(body_r, text=f"{label} berhasil diinstall.",
+        tk.Label(body_r, text=f"{label} installed successfully.",
                  bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
         tk.Label(body_r, text=str(dst), bg=BG, fg=FG3,
                  font=(fm, 8), anchor="w", wraplength=340).grid(row=1, column=1, sticky="w", pady=(4,0))
@@ -1143,19 +1214,19 @@ class MTManager:
                 tk.Label(info_box, text=f"  {line}", bg=BG3, fg=FG3,
                          font=(fm, 8), anchor="w").pack(anchor="w")
             if len(detail_lines) > 8:
-                tk.Label(info_box, text=f"  \u2026 dan {len(detail_lines)-8} file lainnya",
+                tk.Label(info_box, text=f"  \u2026 and {len(detail_lines)-8} more file(s)",
                          bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
-            tk.Label(body, text="Tindakan ini tidak dapat dibatalkan.",
+            tk.Label(body, text="This action cannot be undone.",
                      bg=BG, fg=FG2, font=(f, 9), anchor="w").pack(anchor="w", pady=(0,4))
             tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
             foot = tk.Frame(dlg, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
             fi_f = tk.Frame(foot, bg=BG2, padx=14); fi_f.pack(fill="both", expand=True)
             def _do(): dlg.destroy(); on_confirm()
-            del_h, _ = make_pill_btn(fi_f, f"\u232b  Hapus {item_count} File", _do,
+            del_h, _ = make_pill_btn(fi_f, f"\u232b  Delete {item_count} File(s)", _do,
                                      bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
                                      font_size=10, padx=20, pady=7, radius=7)
             del_h.pack(side="right", pady=8, padx=(0,6))
-            can_h, _ = make_pill_btn(fi_f, "Batal", dlg.destroy,
+            can_h, _ = make_pill_btn(fi_f, "Cancel", dlg.destroy,
                                      bg=BG3, fg=FG, hover_bg=BG4,
                                      font_size=9, padx=20, pady=6, radius=7)
             can_h.pack(side="right", pady=8)
@@ -1174,7 +1245,7 @@ class MTManager:
             body2 = tk.Frame(res, bg=BG, padx=24, pady=18); body2.pack(fill="both", expand=True)
             tk.Label(body2, text=ok_icon, bg=BG, fg=ok_fg,
                      font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
-            tk.Label(body2, text=f"{deleted} file berhasil dihapus.",
+            tk.Label(body2, text=f"{deleted} file deleted successfully.",
                      bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
             if errors:
                 tk.Label(body2, text="\n".join(errors[:3]),
@@ -1200,30 +1271,30 @@ class MTManager:
                 except Exception:
                     pass
             if not targets:
-                self._status("Perhatian: file yang dipilih tidak valid."); return
+                self._status("Notice: selected file is invalid."); return
             def _do_multi():
                 deleted, errors = 0, []
                 for fname, path in targets:
                     try:
                         if path.exists(): path.unlink(); deleted += 1
-                        else: errors.append(f"{fname}: tidak ditemukan")
+                        else: errors.append(f"{fname}: not found")
                     except Exception as e:
                         errors.append(f"{fname}: {e}")
-                self._reload_files(t); self._status(f"{deleted} file dihapus.")
+                self._reload_files(t); self._status(f"{deleted} file(s) deleted.")
                 _result_popup(deleted, errors)
-            _confirm_delete_popup("Konfirmasi Hapus", f"Hapus {len(targets)} file berikut?",
+            _confirm_delete_popup("Confirm Delete", f"Delete the following {len(targets)} file(s)?",
                                   len(targets), [n for n, _ in targets], _do_multi)
             return
 
         cat, fname = self._file_info()
         if not fname:
-            self._status("Centang file yang ingin dihapus, atau pilih satu baris dari tabel."); return
+            self._status("Check the files to delete, or select a row from the table."); return
         target = self._folder_for(t, cat) / fname
         if not target.exists():
-            self._status(f"File tidak ditemukan: {target}"); return
+            self._status(f"File not found: {target}"); return
         def _do_single():
-            target.unlink(); self._reload_files(t); self._status(f"'{fname}' dihapus.")
-        _confirm_delete_popup("Konfirmasi Hapus", "Hapus file ini?", 1, [fname], _do_single)
+            target.unlink(); self._reload_files(t); self._status(f"'{fname}' deleted.")
+        _confirm_delete_popup("Confirm Delete", "Delete this file?", 1, [fname], _do_single)
 
     # ── Clear Logs ────────────────────────────────────────────────────────────
     def clear_logs(self):
@@ -1232,7 +1303,8 @@ class MTManager:
             return
         f  = self._font
         fm = self._font_mono
-        logs_dir  = t.get("logs")
+        logs_dir      = t.get("logs")
+        terminal_path = Path(t["path"])
 
         def _info_popup(title, msg, icon="\u2139", icon_fg=ACCENT):
             w = tk.Toplevel(self.root); w.title(title); w.configure(bg=BG)
@@ -1253,26 +1325,43 @@ class MTManager:
             oh.pack(side="right", pady=8)
             w.update_idletasks(); self._center_win(w); w.deiconify(); w.lift(); w.focus_force()
 
-        if not logs_dir or not logs_dir.exists():
-            _info_popup("Logs Tidak Ditemukan",
-                f"Folder logs tidak ditemukan:\n{logs_dir}\n\n"
-                "Pastikan MT pernah dijalankan minimal sekali.",
+        # Kumpulkan semua folder logs yang akan di-scan
+        _log_dirs = []
+        if logs_dir and logs_dir.exists():
+            _log_dirs.append(logs_dir)
+        _tester_logs = terminal_path / "Tester" / "logs"
+        if _tester_logs.exists():
+            _log_dirs.append(_tester_logs)
+        _tester_dir = terminal_path / "Tester"
+        if _tester_dir.exists():
+            for _agent_dir in sorted(_tester_dir.iterdir()):
+                if _agent_dir.is_dir() and _agent_dir.name.startswith("Agent"):
+                    _agent_logs = _agent_dir / "logs"
+                    if _agent_logs.exists():
+                        _log_dirs.append(_agent_logs)
+
+        if not _log_dirs:
+            _info_popup("Logs Not Found",
+                f"Logs folder not found:\n{logs_dir}\n\n"
+                "Make sure MT has been run at least once.",
                 icon="\u26a0", icon_fg=WARN)
             return
 
-        log_files = [lf for lf in logs_dir.iterdir() if lf.is_file()]
+        log_files = []
+        for _d in _log_dirs:
+            log_files.extend([lf for lf in _d.iterdir() if lf.is_file()])
         if not log_files:
-            _info_popup("Logs Kosong", "Tidak ada file log di terminal ini.")
+            _info_popup("Logs Empty", "No log files in this terminal.")
             return
 
         total_kb  = sum(lf.stat().st_size for lf in log_files) / 1024
         total_str = f"{total_kb:.1f} KB" if total_kb < 1024 else f"{total_kb/1024:.2f} MB"
 
-        dlg = tk.Toplevel(self.root); dlg.title("Hapus Logs"); dlg.configure(bg=BG)
+        dlg = tk.Toplevel(self.root); dlg.title("Clear Logs"); dlg.configure(bg=BG)
         dlg.resizable(False, False); dlg.attributes("-topmost", True)
         hdr = tk.Frame(dlg, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
         hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
-        tk.Label(hdr_inner, text="\u2015  Hapus Logs",
+        tk.Label(hdr_inner, text="\u2015  Clear Logs",
                  bg=BG2, fg=WARN, font=(f, 12, "bold")).pack(side="left", fill="y")
         tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
         body = tk.Frame(dlg, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
@@ -1289,9 +1378,9 @@ class MTManager:
             tk.Label(info_box, text=f"  {lf.name}", bg=BG3, fg=FG3,
                      font=(fm, 8), anchor="w").pack(anchor="w")
         if len(log_files) > 8:
-            tk.Label(info_box, text=f"  \u2026 dan {len(log_files)-8} file lainnya",
+            tk.Label(info_box, text=f"  \u2026 and {len(log_files)-8} more file(s)",
                      bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
-        tk.Label(body, text="Semua file log akan dihapus permanen.\nTindakan ini tidak dapat dibatalkan.",
+        tk.Label(body, text="All log files will be permanently deleted.\nThis action cannot be undone.",
                  bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w").pack(anchor="w", pady=(0,4))
         tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
         foot = tk.Frame(dlg, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
@@ -1306,21 +1395,21 @@ class MTManager:
             t_ref = self._terminal(silent=True)
             if t_ref:
                 self._reload_files(t_ref)
-            self._status(f"{deleted} file log dihapus dari {t['name']}.")
+            self._status(f"{deleted} log file(s) deleted from {t['name']}.")
             # Result popup
-            res = tk.Toplevel(self.root); res.title("Logs Dihapus"); res.configure(bg=BG)
+            res = tk.Toplevel(self.root); res.title("Logs Cleared"); res.configure(bg=BG)
             res.resizable(False, False); res.attributes("-topmost", True)
             ok_icon = "\u2713" if not errors else "\u26a0"
             ok_fg   = "#5ecf3e" if not errors else WARN
             hdr2 = tk.Frame(res, bg=BG2, height=48); hdr2.pack(fill="x"); hdr2.pack_propagate(False)
             hdr2i = tk.Frame(hdr2, bg=BG2, padx=20); hdr2i.pack(fill="both", expand=True)
-            tk.Label(hdr2i, text=f"{ok_icon}  Logs Dihapus",
+            tk.Label(hdr2i, text=f"{ok_icon}  Logs Cleared",
                      bg=BG2, fg=ok_fg, font=(f, 12, "bold")).pack(side="left", fill="y")
             tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
             body2 = tk.Frame(res, bg=BG, padx=24, pady=18); body2.pack(fill="both", expand=True)
             tk.Label(body2, text=ok_icon, bg=BG, fg=ok_fg,
                      font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
-            tk.Label(body2, text=f"{deleted} file log berhasil dihapus.",
+            tk.Label(body2, text=f"{deleted} log file(s) deleted successfully.",
                      bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
             err_text = ("\n".join(errors[:3]) if errors else f"Dari terminal: {t['name']}")
             tk.Label(body2, text=err_text, bg=BG, fg=FG2 if not errors else DANGER,
@@ -1334,11 +1423,11 @@ class MTManager:
             oh.pack(side="right", pady=8)
             res.update_idletasks(); self._center_win(res); res.deiconify(); res.lift(); res.focus_force()
 
-        confirm_h, _ = make_pill_btn(fi, "\u2015  Hapus Semua Log", _confirm,
+        confirm_h, _ = make_pill_btn(fi, "\u2015  Clear All Logs", _confirm,
                                      bg="#261a05", fg=WARN, hover_bg="#3d2a08",
                                      font_size=10, padx=20, pady=7, radius=7)
         confirm_h.pack(side="right", pady=8, padx=(0,6))
-        cancel_h, _ = make_pill_btn(fi, "Batal", dlg.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+        cancel_h, _ = make_pill_btn(fi, "Cancel", dlg.destroy, bg=BG3, fg=FG, hover_bg=BG4,
                                     font_size=9, padx=20, pady=6, radius=7)
         cancel_h.pack(side="right", pady=8)
         dlg.update_idletasks(); self._center_win(dlg); dlg.deiconify(); dlg.lift(); dlg.focus_force()
@@ -1363,20 +1452,20 @@ class MTManager:
     def wget_download(self):
         import shutil as sh_
         if not sh_.which("wget"):
-            themed_popup(self.root, "error", "wget tidak ditemukan",
-                "wget belum terinstall.\n\nJalankan:\n  sudo apt install wget")
+            themed_popup(self.root, "error", "wget not found",
+                "wget is not installed.\n\nRun:\n  sudo apt install wget")
             return
         PLACEHOLDER = self._wget_placeholder
         raw = self.wget_var.get().strip()
         if not raw or raw == PLACEHOLDER:
-            self.wget_status_var.set("Paste URL dulu."); return
+            self.wget_status_var.set("Paste a URL first."); return
         import re
         url_match = re.search(r"https?://[^\s\"']+", raw)
         if not url_match:
-            self.wget_status_var.set("URL tidak ditemukan."); return
+            self.wget_status_var.set("URL not found."); return
         url = url_match.group(0).strip("\"' ")
         DOCS_DIR.mkdir(exist_ok=True)
-        self.wget_status_var.set("Mengunduh\u2026")
+        self.wget_status_var.set("Downloading\u2026")
         self._wget_pct_var.set("")
         self._progress.set(0.0)
         auto_extract = self.auto_extract_var.get()
@@ -1387,32 +1476,32 @@ class MTManager:
                 self._progress.set(1.0)
                 self._wget_pct_var.set("100%")
                 if downloaded and auto_extract and be.is_archive(downloaded):
-                    self.wget_status_var.set(f"Mengekstrak {downloaded.name}\u2026")
+                    self.wget_status_var.set(f"Extracting {downloaded.name}\u2026")
                     ok, msg = be.extract_file(downloaded, DOCS_DIR)
                     if ok:
-                        self.wget_status_var.set("Selesai + diekstrak \u2192 Documents/")
-                        self._status(f"wget + ekstrak selesai: {downloaded.name}")
-                        themed_popup(self.root, "success", "Selesai",
-                            f"File diunduh dan diekstrak ke:\n{DOCS_DIR}\n\nFile: {downloaded.name}")
+                        self.wget_status_var.set("Done + extracted \u2192 Documents/")
+                        self._status(f"wget + extract done: {downloaded.name}")
+                        themed_popup(self.root, "success", "Done",
+                            f"File downloaded and extracted to:\n{DOCS_DIR}\n\nFile: {downloaded.name}")
                     else:
-                        self.wget_status_var.set("Unduh OK, ekstrak gagal.")
-                        themed_popup(self.root, "warning", "Ekstrak Gagal",
-                            f"File berhasil diunduh ke {DOCS_DIR}\n\nTapi ekstrak gagal:\n{msg}")
+                        self.wget_status_var.set("Download OK, extract failed.")
+                        themed_popup(self.root, "warning", "Extract Failed",
+                            f"File downloaded to {DOCS_DIR}\n\nBut extraction failed:\n{msg}")
                 else:
                     fname = downloaded.name if downloaded else ""
-                    self.wget_status_var.set(f"Selesai \u2192 Documents/{fname}")
-                    self._status(f"wget selesai \u2192 {DOCS_DIR}")
-                    themed_popup(self.root, "success", "Download Selesai",
-                        f"File berhasil diunduh ke:\n{DOCS_DIR}")
+                    self.wget_status_var.set(f"Done \u2192 Documents/{fname}")
+                    self._status(f"wget done \u2192 {DOCS_DIR}")
+                    themed_popup(self.root, "success", "Download Complete",
+                        f"File downloaded to:\n{DOCS_DIR}")
             self.root.after(0, _finish)
 
         def _on_error(err):
             self.root.after(0, lambda: (
-                self.wget_status_var.set(f"Gagal: {err[:55]}"),
+                self.wget_status_var.set(f"Failed: {err[:55]}"),
                 self._progress.set(0.0)))
 
         def _on_timeout():
-            self.root.after(0, lambda: self.wget_status_var.set("Timeout \u2014 >120 detik."))
+            self.root.after(0, lambda: self.wget_status_var.set("Timeout \u2014 >120 seconds."))
 
         be.wget_download_bg(url, DOCS_DIR, _on_success, _on_error, _on_timeout)
 
@@ -1424,8 +1513,8 @@ class MTManager:
         exe = be.find_exe(t, "terminal.exe", "terminal64.exe")
         if exe is None:
             name = "terminal64.exe" if t["type"] == "MT5" else "terminal.exe"
-            themed_popup(self.root, "error", f"{name} tidak ditemukan",
-                f"File {name} tidak ditemukan untuk {t['name']} ({t['type']})\n"
+            themed_popup(self.root, "error", f"{name} not found",
+                f"File {name} not found for {t['name']} ({t['type']})\n"
                 f"Folder: {t['path']}")
             return
         self._wine_launch(exe, f"{t['name']} ({t['type']})")
@@ -1437,31 +1526,74 @@ class MTManager:
         exe = be.find_exe(t, "metaeditor.exe", "MetaEditor64.exe")
         if exe is None:
             name = "MetaEditor64.exe" if t["type"] == "MT5" else "metaeditor.exe"
-            themed_popup(self.root, "error", f"{name} tidak ditemukan",
-                f"File {name} tidak ditemukan untuk {t['name']} ({t['type']})\n"
+            themed_popup(self.root, "error", f"{name} not found",
+                f"File {name} not found for {t['name']} ({t['type']})\n"
                 f"Folder: {t['path']}")
             return
         self._wine_launch(exe, f"MetaEditor {t['name']} ({t['type']})")
 
     def _wine_launch(self, exe_path, label: str):
-        self._status(f"Membuka {label}\u2026")
+        self._status(f"Opening {label}\u2026")
         def _on_success():
-            self.root.after(0, lambda: self._status(f"{label} sedang dibuka."))
+            self.root.after(0, lambda: self._status(f"{label} is opening."))
         def _on_error(reason):
             if reason == "wine_not_found":
                 self.root.after(0, lambda: themed_popup(self.root, "error",
-                    "Wine tidak ditemukan",
-                    "Perintah 'wine' tidak tersedia.\n"
-                    "Install wine terlebih dahulu:\n  sudo apt install wine"))
+                    "Wine Not Found",
+                    "The 'wine' command is not available.\n"
+                    "Install wine first:\n  sudo apt install wine"))
             else:
                 self.root.after(0, lambda r=reason: themed_popup(self.root, "error",
-                    "Gagal", f"Tidak dapat membuka {label}:\n{r}"))
+                    "Failed", f"Cannot open {label}:\n{r}"))
         be.wine_launch_bg(exe_path, _on_success, _on_error)
 
     # ── Uninstall MT ──────────────────────────────────────────────────────────
+    def _uninstall_autostart_warning(self, t):
+        f = self._font
+        win = tk.Toplevel(self.root); win.title("Cannot Uninstall")
+        win.configure(bg=BG); win.resizable(False, False); win.attributes("-topmost", True)
+        body = tk.Frame(win, bg=BG, padx=28, pady=22); body.pack(fill="both", expand=True)
+        hdr = tk.Frame(body, bg=BG); hdr.pack(fill="x", pady=(0, 12))
+        tk.Label(hdr, text="⚠", bg=BG, fg=WARN, font=(f, 22)).pack(side="left", padx=(0, 14))
+        col = tk.Frame(hdr, bg=BG); col.pack(side="left", fill="x", expand=True)
+        tk.Label(col, text="Autostart is Enabled", bg=BG, fg=FG,
+                 font=(f, 12, "bold"), anchor="w").pack(anchor="w")
+        tk.Label(col, text=f"{t['name']}  ·  {t['type']}",
+                 bg=BG, fg=FG3, font=(f, 9), anchor="w").pack(anchor="w")
+        tk.Label(body, text="Please disable Autostart before uninstalling this terminal.",
+                 bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w",
+                 wraplength=420).pack(anchor="w", pady=(0, 4))
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=48); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+
+        def _disable_and_continue():
+            be.autostart_set(
+                t, False,
+                lambda t_: be.find_exe(t_, "terminal.exe", "terminal64.exe"))
+            sel = self.term_tree.selection()
+            if sel:
+                self._as_state_cache[sel[0]] = False
+            self._update_as_switch(t)
+            self._draw_as_canvas()
+            win.destroy()
+            self.uninstall_ea_exe()   # autostart kini OFF → lanjut ke konfirmasi
+
+        cont_h, _ = make_pill_btn(fi, "Disable Autostart & Continue", _disable_and_continue,
+                                  bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
+                                  font_size=9, padx=18, pady=6, radius=7)
+        cont_h.pack(side="right", pady=8, padx=(0, 6))
+        cancel_h, _ = make_pill_btn(fi, "Cancel", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+        win.update_idletasks(); self._center_win(win); win.deiconify(); win.lift(); win.focus_force()
+
     def uninstall_ea_exe(self):
         t = self._terminal()
         if not t:
+            return
+        if be.autostart_is_on(t):
+            self._uninstall_autostart_warning(t)
             return
         f  = self._font
         terminal_path = Path(t["path"])
@@ -1478,11 +1610,11 @@ class MTManager:
                 if candidate.exists():
                     uninstall_exe = candidate
             if uninstall_exe is None:
-                ip_str = str(install_path) if install_path else "(gagal parse origin.txt)"
-                themed_popup(self.root, "error", "Uninstall.exe tidak ditemukan",
-                    f"File Uninstall.exe tidak dapat ditemukan untuk terminal:\n"
-                    f"{t['name']} (MT4)\n\nPath instalasi dari origin.txt:\n{ip_str}\n\n"
-                    f"Folder AppData:\n{terminal_path}")
+                ip_str = str(install_path) if install_path else "(failed to parse origin.txt)"
+                themed_popup(self.root, "error", "Uninstall.exe not found",
+                    f"File Uninstall.exe could not be found for terminal:\n"
+                    f"{t['name']} (MT4)\n\nInstall path from origin.txt:\n{ip_str}\n\n"
+                    f"AppData folder:\n{terminal_path}")
                 return
         else:
             candidate = terminal_path / "uninstall.exe"
@@ -1490,12 +1622,12 @@ class MTManager:
                 uninstall_exe = candidate
 
         if uninstall_exe is None:
-            themed_popup(self.root, "error", "Uninstall.exe tidak ditemukan",
-                f"File Uninstall.exe tidak dapat ditemukan untuk terminal:\n"
-                f"{t['name']} ({t['type']})\n\nFolder yang diperiksa:\n{terminal_path}")
+            themed_popup(self.root, "error", "Uninstall.exe not found",
+                f"File Uninstall.exe could not be found for terminal:\n"
+                f"{t['name']} ({t['type']})\n\nChecked folder:\n{terminal_path}")
             return
 
-        win = tk.Toplevel(self.root); win.title("Konfirmasi Uninstall MT")
+        win = tk.Toplevel(self.root); win.title("Confirm Uninstall MT")
         win.configure(bg=BG); win.resizable(False, False); win.attributes("-topmost", True)
         body = tk.Frame(win, bg=BG, padx=28, pady=22); body.pack(fill="both", expand=True)
         hdr = tk.Frame(body, bg=BG); hdr.pack(fill="x", pady=(0,14))
@@ -1513,8 +1645,8 @@ class MTManager:
             exe_path_str = "~" + exe_path_str[len(home_str):]
         tk.Label(info_box, text=exe_path_str, bg=BG3, fg=ACCENT2,
                  font=(self._font_mono, 9), anchor="w", wraplength=420, justify="left").pack(anchor="w")
-        tk.Label(body, text="Proses uninstall akan dijalankan via Wine.\n"
-                             "Pastikan terminal MetaTrader sudah ditutup sebelum melanjutkan.",
+        tk.Label(body, text="The uninstall process will run via Wine.\n"
+                             "Make sure the MetaTrader terminal is closed before continuing.",
                  bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w",
                  wraplength=440).pack(anchor="w", pady=(0,4))
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
@@ -1523,25 +1655,25 @@ class MTManager:
 
         def _run_uninstall():
             win.destroy()
-            self._status(f"Menjalankan uninstall {t['name']} di background\u2026")
+            self._status(f"Running uninstall {t['name']} in background\u2026")
             def _on_done(rc, t_):
                 self.root.after(800, lambda: self.scan_terminals(silent=True))
                 self.root.after(0, lambda: self._status(
-                    f"Uninstall {t_['name']} selesai (rc={rc})."))
+                    f"Uninstall {t_['name']} finished (rc={rc})."))
             def _on_wine():
                 self.root.after(0, lambda: themed_popup(self.root, "error",
-                    "Wine tidak ditemukan",
-                    "Perintah 'wine' tidak tersedia.\nInstall wine: sudo apt install wine"))
+                    "Wine Not Found",
+                    "The 'wine' command is not available.\nInstall wine: sudo apt install wine"))
             def _on_err(e):
                 self.root.after(0, lambda err=e: themed_popup(self.root, "error",
-                    "Gagal menjalankan uninstall", str(err)))
+                    "Failed to run uninstall", str(err)))
             be.run_uninstall_bg(uninstall_exe, t, _on_done, _on_wine, _on_err)
 
-        run_h, _ = make_pill_btn(fi, "\u26a0  Lanjutkan Uninstall", _run_uninstall,
+        run_h, _ = make_pill_btn(fi, "\u26a0  Continue Uninstall", _run_uninstall,
                                   bg="#2a1a00", fg="#e07b00", hover_bg="#3d2800",
                                   font_size=9, padx=20, pady=6, radius=7)
         run_h.pack(side="right", pady=8, padx=(0,6))
-        cancel_h, _ = make_pill_btn(fi, "Batal", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+        cancel_h, _ = make_pill_btn(fi, "Cancel", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
                                     font_size=9, padx=20, pady=6, radius=7)
         cancel_h.pack(side="right", pady=8)
         win.update_idletasks(); self._center_win(win); win.deiconify(); win.lift(); win.focus_force()
@@ -1757,7 +1889,7 @@ class MTManager:
                 w.destroy()
             fr = tk.Frame(broker_inner, bg=BG)
             fr.pack(expand=True, pady=40)
-            tk.Label(fr, text="\u29d7  Mengambil daftar broker dari GitHub\u2026",
+            tk.Label(fr, text="\u29d7  Fetching broker list from GitHub\u2026",
                      bg=BG, fg=FG3, font=(f, 10)).pack()
             broker_inner.update_idletasks()
             canvas_grid.configure(scrollregion=canvas_grid.bbox("all"))
@@ -1767,7 +1899,7 @@ class MTManager:
                 w.destroy()
             fr = tk.Frame(broker_inner, bg=BG)
             fr.pack(expand=True, pady=40)
-            tk.Label(fr, text="\u26a0  Gagal memuat daftar broker",
+            tk.Label(fr, text="\u26a0  Failed to load broker list",
                      bg=BG, fg=WARN, font=(f, 10, "bold")).pack()
             tk.Label(fr, text=msg, bg=BG, fg=FG3, font=(f, 9),
                      wraplength=420, justify="center").pack(pady=(4, 12))
@@ -1810,7 +1942,7 @@ class MTManager:
                        if (ver == "Semua" or b[0] == ver)
                        and (not search or search in b[1].lower())]
             if not brokers:
-                tk.Label(broker_inner, text="Tidak ada hasil.",
+                tk.Label(broker_inner, text="No results.",
                          bg=BG, fg=FG3, font=(f, 9)).pack(pady=20)
                 return
 
@@ -1856,7 +1988,7 @@ class MTManager:
                             except Exception: pass
                 def _click(e, v=version, n=name, u=url):
                     if _downloading[0]:
-                        status_var.set("\u23f3 Sedang mengunduh, tunggu selesai.")
+                        status_var.set("\u23f3 Downloading, please wait.")
                         return
                     _confirm_download(v, n, u)
 
@@ -1875,8 +2007,12 @@ class MTManager:
         # ── Konfirmasi download ──
         def _confirm_download(version, name, url):
             """Tampilkan popup konfirmasi sebelum mulai download."""
+            existing = be.broker_already_installed(name, version, self.terminals)
+            if existing:
+                self._broker_exists_dialog(win, version, name, existing)
+                return
             dlg = tk.Toplevel(win)
-            dlg.title("Konfirmasi Install")
+            dlg.title("Confirm Install")
             dlg.configure(bg=BG)
             dlg.resizable(False, False)
             dlg.transient(win)
@@ -1892,7 +2028,7 @@ class MTManager:
             hdr.pack(fill="x"); hdr.pack_propagate(False)
             hdr_i = tk.Frame(hdr, bg=BG2, padx=18)
             hdr_i.pack(fill="both", expand=True)
-            tk.Label(hdr_i, text="\u2b07  Konfirmasi Install MetaTrader",
+            tk.Label(hdr_i, text="\u2b07  Confirm Install MetaTrader",
                      bg=BG2, fg=FG, font=(f, 11, "bold")).pack(side="left", fill="y")
             tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
 
@@ -1916,11 +2052,11 @@ class MTManager:
                 dlg.destroy()
                 _start_download(version, name, url)
 
-            ok_h, _ = make_pill_btn(fi_d, "\u2b07  Ya, Install", _do_install,
+            ok_h, _ = make_pill_btn(fi_d, "\u2b07  Yes, Install", _do_install,
                                      bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
                                      font_size=9, padx=18, pady=6, radius=7)
             ok_h.pack(side="right", pady=8, padx=(0, 6))
-            cancel_h2, _ = make_pill_btn(fi_d, "Batal", dlg.destroy,
+            cancel_h2, _ = make_pill_btn(fi_d, "Cancel", dlg.destroy,
                                           bg=BG3, fg=FG, hover_bg=BG4,
                                           font_size=9, padx=16, pady=6, radius=7)
             cancel_h2.pack(side="right", pady=8)
@@ -1931,12 +2067,12 @@ class MTManager:
         # ── Download & install handler ──
         def _start_download(version, name, url):
             if not sh_.which("wget"):
-                status_var.set("\u26a0 wget tidak ditemukan. Jalankan: sudo apt install wget")
+                status_var.set("\u26a0 wget not found. Run: sudo apt install wget")
                 status_lbl.config(fg=WARN)
                 return
             _downloading[0] = True
             prog_bar.set(0.05)
-            status_var.set(f"Mempersiapkan unduhan {name}\u2026")
+            status_var.set(f"Preparing download for {name}\u2026")
             status_lbl.config(fg=FG3)
             DOCS_DIR.mkdir(exist_ok=True)
 
@@ -1948,9 +2084,9 @@ class MTManager:
                     _downloading[0] = False
                     prog_bar.set(1.0)
                     status_var.set(
-                        f"\u2713 {bname} — installer dijalankan. ")
+                        f"\u2713 {bname} — installer started. ")
                     status_lbl.config(fg="#5ecf3e")
-                    self._status(f"Install MT {bname} dijalankan via Wine.")
+                    self._status(f"Install MT {bname} started via Wine.")
                     self.root.after(5000, lambda: self.scan_terminals(silent=True))
                 win.after(0, _done)
 
@@ -1966,7 +2102,7 @@ class MTManager:
                 def _to():
                     _downloading[0] = False
                     prog_bar.set(0.0)
-                    status_var.set("\u26a0 Timeout — unduhan terlalu lama (>5 menit).")
+                    status_var.set("\u26a0 Timeout — download took too long (>5 min).")
                     status_lbl.config(fg=WARN)
                 win.after(0, _to)
 
@@ -1978,7 +2114,7 @@ class MTManager:
         browse_sec = tk.Frame(win, bg=BG2, padx=14, pady=10)
         browse_sec.pack(fill="x")
 
-        tk.Label(browse_sec, text="ATAU GUNAKAN FILE INSTALLER LOKAL",
+        tk.Label(browse_sec, text="OR USE A LOCAL INSTALLER FILE",
                  bg=BG2, fg=FG3, font=(f, 8), anchor="w").pack(fill="x", pady=(0, 6))
 
         file_row      = tk.Frame(browse_sec, bg=BG2)
@@ -1997,7 +2133,7 @@ class MTManager:
             try: win.grab_release()
             except Exception: pass
             def _do_yad():
-                result = be.yad_pick_file(title="Pilih File Installer MT",
+                result = be.yad_pick_file(title="Select MT Installer File",
                     filetypes=["*.exe"], start_dir=DOCS_DIR, root_widget=self.root)
                 def _back():
                     win.lift(); win.focus_force()
@@ -2018,25 +2154,25 @@ class MTManager:
         def _run_install_local():
             path = installer_var.get().strip()
             if not path:
-                status_var.set("\u26a0  Pilih file installer terlebih dahulu.")
+                status_var.set("\u26a0  Select an installer file first.")
                 status_lbl.config(fg=WARN); return
             if not Path(path).exists():
-                status_var.set("\u26a0  File tidak ditemukan.")
+                status_var.set("\u26a0  File not found.")
                 status_lbl.config(fg=DANGER); return
             # Window TIDAK ditutup — tetap terbuka agar user bisa install lagi
-            status_var.set(f"\u25b6  Menjalankan installer: {Path(path).name}\u2026")
+            status_var.set(f"\u25b6  Running installer: {Path(path).name}\u2026")
             status_lbl.config(fg=FG3)
             prog_bar.set(0.2)
             def _on_finish_local(done, qty, fname, errs):
                 def _ui():
                     prog_bar.set(1.0)
                     if errs:
-                        status_var.set(f"\u26a0  Selesai dengan error: {errs[0][:60]}")
+                        status_var.set(f"\u26a0  Finished with error: {errs[0][:60]}")
                         status_lbl.config(fg=WARN)
                     else:
-                        status_var.set(f"\u2713  {fname} berhasil diinstall.")
+                        status_var.set(f"\u2713  {fname} installed successfully.")
                         status_lbl.config(fg="#5ecf3e")
-                    self._status(f"Install MT lokal selesai: {done}/{qty} dari {fname}")
+                    self._status(f"Local MT install finished: {done}/{qty} of {fname}")
                     self.root.after(800, lambda: self.scan_terminals(silent=True))
                 win.after(0, _ui)
             be.run_mt_installer_bg(
@@ -2045,7 +2181,7 @@ class MTManager:
                 on_finish=_on_finish_local,
             )
 
-        run_h, _ = make_pill_btn(file_row, "\u2b07  Mulai Install", _run_install_local,
+        run_h, _ = make_pill_btn(file_row, "\u2b07  Start Install", _run_install_local,
                                   bg="#0a1f0a", fg="#5ecf3e", hover_bg="#152e15",
                                   font_size=9, padx=14, pady=6, radius=7)
         run_h.pack(side="left")
@@ -2054,7 +2190,7 @@ class MTManager:
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
         status_frame = tk.Frame(win, bg=BG2, padx=14, pady=5)
         status_frame.pack(fill="x")
-        status_var = tk.StringVar(value="Pilih broker untuk menginstall.")
+        status_var = tk.StringVar(value="Select a broker to install.")
         status_lbl = tk.Label(status_frame, textvariable=status_var,
                               bg=BG2, fg=FG3, font=(f, 9), anchor="w")
         status_lbl.pack(side="left", fill="x", expand=True)
@@ -2067,18 +2203,56 @@ class MTManager:
         foot.pack_propagate(False)
         fi = tk.Frame(foot, bg=BG2, padx=14)
         fi.pack(fill="both", expand=True)
-        cancel_h, _ = make_pill_btn(fi, "Tutup", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+        cancel_h, _ = make_pill_btn(fi, "Close", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
                                     font_size=9, padx=20, pady=6, radius=7)
         cancel_h.pack(side="right", pady=7)
 
+
+    def _broker_exists_dialog(self, parent, version, name, existing):
+        f = self._font
+        dlg = tk.Toplevel(parent); dlg.title("Already Installed")
+        dlg.configure(bg=BG); dlg.resizable(False, False)
+        dlg.transient(parent); dlg.attributes("-topmost", True)
+        body = tk.Frame(dlg, bg=BG, padx=26, pady=20); body.pack(fill="both", expand=True)
+        hdr = tk.Frame(body, bg=BG); hdr.pack(fill="x", pady=(0, 12))
+        tk.Label(hdr, text="⚠", bg=BG, fg=WARN, font=(f, 22)).pack(side="left", padx=(0, 14))
+        col = tk.Frame(hdr, bg=BG); col.pack(side="left", fill="x", expand=True)
+        tk.Label(col, text="Already Installed", bg=BG, fg=FG,
+                 font=(f, 12, "bold"), anchor="w").pack(anchor="w")
+        tk.Label(col, text=f"{name}  ·  {version}",
+                 bg=BG, fg=FG3, font=(f, 9), anchor="w").pack(anchor="w")
+        tk.Label(body,
+                 text=f"{name} ({version}) is already installed as "
+                      f"“{existing['name']}”.\n"
+                      f"Please duplicate the existing one or choose another broker.",
+                 bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w",
+                 wraplength=420).pack(anchor="w", pady=(0, 4))
+        tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(dlg, bg=BG2, height=48); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+
+        def _go_duplicate():
+            dlg.destroy()
+            try: parent.destroy()
+            except Exception: pass
+            self.duplicate_mt()
+
+        dup_h, _ = make_pill_btn(fi, "⧉  Duplicate Existing", _go_duplicate,
+                                 bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
+                                 font_size=9, padx=18, pady=6, radius=7)
+        dup_h.pack(side="right", pady=8, padx=(0, 6))
+        cancel_h, _ = make_pill_btn(fi, "Cancel", dlg.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+        try: dlg.grab_set()
+        except Exception: pass
+        dlg.update_idletasks(); self._center_win(dlg); dlg.deiconify(); dlg.lift(); dlg.focus_force()
 
     # ── Duplicate MT ──────────────────────────────────────────────────────────
     def duplicate_mt(self):
         t = self._terminal(silent=False)
         if not t:
             return
-        f  = self._font
-        fm = self._font_mono
         mt_type = t.get("type", "MT4")
         if mt_type == "MT4":
             src_root_str = t.get("install_path", "")
@@ -2098,107 +2272,15 @@ class MTManager:
                 if candidate.exists() and candidate.is_dir():
                     src_folder = candidate; break
         if src_folder is None or not src_folder.exists():
-            themed_popup(self.root, "error", "Folder tidak ditemukan",
-                f"Folder instalasi MT tidak dapat ditemukan untuk terminal:\n{t['name']}")
+            themed_popup(self.root, "error", "Folder not found",
+                f"MT installation folder could not be found for terminal:\n{t['name']}")
             return
 
         base_name = src_folder.name
-        win = tk.Toplevel(self.root); win.title("Duplikat MT")
-        win.configure(bg=BG); win.resizable(False, False); win.attributes("-topmost", True)
-        win.update_idletasks()
-        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 270
-        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - 190
-        win.geometry(f"540x380+{rx}+{ry}"); win.deiconify()
-
-        hdr = tk.Frame(win, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
-        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
-        tk.Label(hdr_inner, text="\u2398  Duplikat MetaTrader",
-                 bg=BG2, fg=FG, font=(f, 12, "bold")).pack(side="left", fill="y")
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
-        body = tk.Frame(win, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
-
-        # ── Sumber ──
-        tk.Label(body, text="SUMBER", bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
-        src_border = tk.Frame(body, bg=BORDER2, padx=1, pady=1); src_border.pack(fill="x", pady=(4,14))
-        tk.Label(src_border, text=f"  {t['name']}  [{mt_type}]  \u2192  {src_folder}",
-                 bg=BG3, fg=FG2, font=(fm, 9), anchor="w").pack(fill="x", ipady=7, padx=1)
-
-        # ── Jumlah ──
-        tk.Label(body, text="JUMLAH DUPLIKAT  (maks. 19)",
-                 bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
-        qty_row = tk.Frame(body, bg=BG); qty_row.pack(fill="x", pady=(4,6))
-        qty_var = tk.IntVar(value=1)
-        def _set_qty(v):
-            try: qty_var.set(max(1, min(19, int(v))))
-            except (ValueError, tk.TclError): pass
-        def _dec(): _set_qty(qty_var.get() - 1)
-        def _inc(): _set_qty(qty_var.get() + 1)
-        dec_h, _ = make_pill_btn(qty_row, "\u2212", _dec, bg=BG3, fg=FG, hover_bg=BG4,
-                                  font_size=12, padx=10, pady=6, radius=7)
-        dec_h.pack(side="left", padx=(0,6))
-        qty_border = tk.Frame(qty_row, bg=BORDER2, padx=1, pady=1); qty_border.pack(side="left", padx=(0,6))
-        qty_entry = tk.Entry(qty_border, textvariable=qty_var, bg=BG3, fg=FG,
-                             insertbackground=ACCENT, relief="flat", font=(f, 11, "bold"),
-                             width=4, justify="center", highlightthickness=0)
-        qty_entry.pack(ipady=6, padx=1)
-        qty_entry.bind("<FocusOut>", lambda _: _set_qty(qty_var.get()))
-        inc_h, _ = make_pill_btn(qty_row, "+", _inc, bg=BG3, fg=FG, hover_bg=BG4,
-                                  font_size=12, padx=10, pady=6, radius=7)
-        inc_h.pack(side="left")
-
-        # ── Toggle custom nama ──
-        tk.Frame(body, bg=BORDER, height=1).pack(fill="x", pady=(10, 8))
-        custom_row = tk.Frame(body, bg=BG); custom_row.pack(fill="x")
-        custom_var = tk.BooleanVar(value=False)
-
-        def _toggle_custom(*_):
-            hint_var.set(_build_hint())
-
-        ck_border = tk.Frame(custom_row, bg=BORDER2, padx=1, pady=1)
-        ck_border.pack(side="left")
-        ck = tk.Checkbutton(ck_border, variable=custom_var, bg=BG3,
-                            activebackground=BG3, selectcolor=BG3,
-                            fg=ACCENT, activeforeground=ACCENT,
-                            relief="flat", highlightthickness=0,
-                            command=_toggle_custom)
-        ck.pack(padx=4, pady=2)
-        tk.Label(custom_row, text="Custom nama folder", bg=BG, fg=FG2,
-                 font=(f, 9)).pack(side="left", padx=(8, 0))
-
-        # ── Preview hint ──
-        hint_var = tk.StringVar(value="")
-        tk.Label(body, textvariable=hint_var, bg=BG, fg=FG3, font=(f, 9), anchor="w",
-                 wraplength=490).pack(fill="x", pady=(8, 0))
-
-        def _build_hint():
-            q = qty_var.get()
-            if custom_var.get():
-                return f"\u270e  Nama folder akan diisi satu per satu saat proses duplikasi."
-            names = [f"{base_name} {n}" for n in range(2, 2 + q)]
-            preview = ", ".join(names[:3])
-            if q > 3: preview += ", \u2026"
-            return f"\u2192 folder: {preview}"
-
-        def _update_hint(*_): hint_var.set(_build_hint())
-        qty_var.trace_add("write", _update_hint); _update_hint()
-
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
-        foot = tk.Frame(win, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
-        fi = tk.Frame(foot, bg=BG2, padx=14); fi.pack(fill="both", expand=True)
-
-        def _run_duplicate():
-            qty = qty_var.get()
-            use_custom = custom_var.get()
-            win.destroy()
-            self._run_mt_duplicate(src_folder, base_name, linux_base, qty, mt_type, use_custom)
-
-        run_h, _ = make_pill_btn(fi, "\u2398  Mulai Duplikat", _run_duplicate,
-                                  bg="#1a1400", fg=WARN, hover_bg="#2a2000",
-                                  font_size=10, padx=20, pady=7, radius=7)
-        run_h.pack(side="right", pady=8, padx=(0,6))
-        cancel_h, _ = make_pill_btn(fi, "Batal", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
-                                    font_size=9, padx=20, pady=6, radius=7)
-        cancel_h.pack(side="right", pady=8)
+        # Simplified flow: always make exactly one duplicate and go straight to
+        # the folder-name prompt (no quantity selector, no custom-name toggle).
+        self._run_mt_duplicate(src_folder, base_name, linux_base, 1, mt_type,
+                               use_custom=True)
 
     def _run_mt_duplicate(self, src_folder, base_name, linux_base, qty, mt_type,
                           use_custom=False):
@@ -2235,7 +2317,7 @@ class MTManager:
             tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
             foot = tk.Frame(win, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
             fi   = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
-            close_h, _ = make_pill_btn(fi, "Tutup", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+            close_h, _ = make_pill_btn(fi, "Close", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
                                        font_size=9, padx=20, pady=6, radius=7)
             _cancelled = [False]
 
@@ -2243,7 +2325,7 @@ class MTManager:
                 _cancelled[0] = True
                 icon_lbl.config(text="\u23f9", fg=WARN)
                 title_lbl.config(
-                    text="Membatalkan\u2026 menunggu copy selesai lalu launch MT yang sudah ter-copy.",
+                    text="Cancelling\u2026 waiting for copy to finish, then launching the copied MT.",
                     fg=WARN)
                 dir_var.set(""); phase_var.set("")
                 cancel_h.pack_forget()
@@ -2255,20 +2337,20 @@ class MTManager:
 
             def _on_copy_progress(i, total, dst_name):
                 def _upd():
-                    title_lbl.config(text=f"Menyalin {i+1} dari {total}\u2026", fg=FG)
+                    title_lbl.config(text=f"Copying {i+1} of {total}\u2026", fg=FG)
                     count_var.set(f"{i} / {total}")
                     progress.set((i / total) * 0.5 if total > 1 else 0.05)
                     dir_var.set(f"\u2192 {dst_name}")
-                    phase_var.set("Fase 1/2: Menyalin folder\u2026")
+                    phase_var.set("Phase 1/2: Copying folder\u2026")
                 win.after(0, _upd)
 
             def _on_launch_progress(j, total, dst_name, exe_name):
                 def _upd():
-                    title_lbl.config(text=f"Menjalankan MT {j+1} dari {total}\u2026", fg=FG)
+                    title_lbl.config(text=f"Running MT {j+1} of {total}\u2026", fg=FG)
                     count_var.set(f"{j+1} / {total}")
                     progress.set(0.5 + ((j + 1) / max(total, 1)) * 0.5)
                     dir_var.set(f"\u25b6 {dst_name}\\{exe_name}")
-                    phase_var.set("Fase 2/2: Membuka MetaTrader\u2026")
+                    phase_var.set("Phase 2/2: Opening MetaTrader\u2026")
                 win.after(0, _upd)
 
             def _on_finish(done_cnt, total, src_name, all_errors, was_cancelled):
@@ -2279,18 +2361,18 @@ class MTManager:
                     if was_cancelled:
                         icon_lbl.config(text="\u23f9", fg=WARN)
                         title_lbl.config(
-                            text=f"Dibatalkan. {done_cnt} duplikat ter-copy & dibuka.", fg=WARN)
+                            text=f"Cancelled. {done_cnt} duplicate(s) copied & opened.", fg=WARN)
                     elif all_errors:
                         icon_lbl.config(text="\u26a0", fg=WARN)
-                        title_lbl.config(text=f"Selesai dengan {len(all_errors)} error.", fg=WARN)
+                        title_lbl.config(text=f"Finished with {len(all_errors)} error(s).", fg=WARN)
                         dir_lbl.config(text="\n".join(all_errors[:3]), fg=DANGER)
                     else:
                         icon_lbl.config(text="\u2713", fg=WARN)
                         title_lbl.config(
-                            text=f"{done_cnt} duplikat dibuat & dijalankan.\n Silakan Scan Metatrader",
+                            text=f"{done_cnt} duplicate(s) created & launched.\n Please Scan MetaTrader",
                             fg=FG)
-                        dir_lbl.config(text="Scan otomatis dijalankan.", fg=FG2)
-                    self._status(f"Duplikat MT selesai: {done_cnt}/{total} dari {src_name}")
+                        dir_lbl.config(text="Auto-scan started.", fg=FG2)
+                    self._status(f"Duplicate MT finished: {done_cnt}/{total} of {src_name}")
                     self.root.after(800, lambda: self.scan_terminals(silent=True))
                 win.after(0, _done)
 
@@ -2307,7 +2389,7 @@ class MTManager:
             def _ask_name(idx, callback):
                 """Tampilkan dialog input nama untuk duplikat ke-idx."""
                 dlg = tk.Toplevel(self.root)
-                dlg.title(f"Nama Duplikat {idx + 1} dari {qty}")
+                dlg.title(f"Duplicate Name {idx + 1} of {qty}")
                 dlg.configure(bg=BG); dlg.resizable(False, False)
                 dlg.attributes("-topmost", True)
                 dlg.update_idletasks()
@@ -2317,13 +2399,13 @@ class MTManager:
 
                 hdr = tk.Frame(dlg, bg=BG2, height=42); hdr.pack(fill="x"); hdr.pack_propagate(False)
                 hdr_i = tk.Frame(hdr, bg=BG2, padx=16); hdr_i.pack(fill="both", expand=True)
-                tk.Label(hdr_i, text=f"\u270e  Nama Folder Duplikat {idx + 1} / {qty}",
+                tk.Label(hdr_i, text=f"\u270e  Duplicate Folder Name {idx + 1} / {qty}",
                          bg=BG2, fg=FG, font=(f, 10, "bold")).pack(side="left", fill="y")
                 tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
 
                 body2 = tk.Frame(dlg, bg=BG, padx=20, pady=14); body2.pack(fill="both", expand=True)
                 default_name = f"{base_name} {idx + 2}"
-                tk.Label(body2, text="Nama folder  (kosongkan = nama default)",
+                tk.Label(body2, text="Folder name  (leave empty = default name)",
                          bg=BG, fg=FG3, font=(f, 8), anchor="w").pack(fill="x")
                 entry_border = tk.Frame(body2, bg=BORDER2, padx=1, pady=1)
                 entry_border.pack(fill="x", pady=(4, 0))
@@ -2352,7 +2434,7 @@ class MTManager:
                                         bg="#0d1a0d", fg=ACCENT3, hover_bg="#142814",
                                         font_size=9, padx=18, pady=6, radius=7)
                 ok_h.pack(side="right", pady=7, padx=(0,6))
-                cx_h, _ = make_pill_btn(fi2, "\u2715  Batalkan Semua", _cancel_all,
+                cx_h, _ = make_pill_btn(fi2, "\u2715  Cancel All", _cancel_all,
                                         bg="#2a0f0f", fg=DANGER, hover_bg="#3d1212",
                                         font_size=9, padx=14, pady=6, radius=7)
                 cx_h.pack(side="right", pady=7)
@@ -2397,7 +2479,7 @@ class MTManager:
         body = tk.Frame(win, bg=BG, padx=28, pady=24); body.pack(fill="both", expand=True)
         icon_lbl = tk.Label(body, text="\u21ba", bg=BG, fg=ACCENT, font=(f, 22))
         icon_lbl.grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
-        msg_var = tk.StringVar(value="Memeriksa update...")
+        msg_var = tk.StringVar(value="Checking for updates...")
         msg_lbl = tk.Label(body, textvariable=msg_var, bg=BG, fg=FG,
                            font=(f, 11, "bold"), anchor="w", justify="left")
         msg_lbl.grid(row=0, column=1, sticky="w")
@@ -2416,24 +2498,24 @@ class MTManager:
             import sys, os
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
-        restart_h, _ = make_pill_btn(foot_inner, "\u21bb  Restart Aplikasi", _restart,
+        restart_h, _ = make_pill_btn(foot_inner, "\u21bb  Restart App", _restart,
                                       bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
                                       font_size=9, padx=20, pady=6, radius=7)
 
         def _on_done(already_updated):
             if already_updated:
                 icon_lbl.config(text="\u2713", fg=ACCENT3)
-                msg_var.set("Aplikasi sudah up-to-date."); sub_var.set("Tidak ada perubahan baru.")
+                msg_var.set("App is up-to-date."); sub_var.set("No new changes.")
                 ok_h.pack(side="right", pady=8)
             else:
                 icon_lbl.config(text="\u2713", fg=ACCENT3)
-                msg_var.set("Update berhasil!")
-                sub_var.set("Restart aplikasi untuk menerapkan perubahan.")
+                msg_var.set("Update successful!")
+                sub_var.set("Restart the app to apply changes.")
                 restart_h.pack(side="right", pady=8, padx=(0,6)); ok_h.pack(side="right", pady=8)
 
         def _on_fail(msg):
             icon_lbl.config(text="\u2717", fg=DANGER)
-            msg_var.set("Update gagal."); sub_var.set(msg[:72]); ok_h.pack(side="right", pady=8)
+            msg_var.set("Update failed."); sub_var.set(msg[:72]); ok_h.pack(side="right", pady=8)
 
         be.run_update_bg(update_sh,
                          on_done=lambda au: win.after(0, lambda: _on_done(au)),
@@ -2443,13 +2525,13 @@ class MTManager:
         update_sh = Path.home() / "vfx2" / "update.sh"
         if not update_sh.exists():
             return
-        self._status("Memeriksa update otomatis\u2026")
+        self._status("Checking for updates automatically\u2026")
 
         def _on_new():
             self.root.after(0, lambda: self._show_auto_update_result(True))
 
         def _on_current():
-            self.root.after(0, lambda: self._status("Aplikasi sudah up-to-date."))
+            self.root.after(0, lambda: self._status("App is up-to-date."))
 
         def _on_err(msg):
             self.root.after(0, lambda m=msg: self._status(m))
@@ -2460,7 +2542,7 @@ class MTManager:
         if not has_update:
             return
         f   = self._font
-        win = tk.Toplevel(self.root); win.title("Update Tersedia")
+        win = tk.Toplevel(self.root); win.title("Update Available")
         win.configure(bg=BG); win.geometry("400x160"); win.resizable(False, False)
         win.attributes("-topmost", True); win.update_idletasks()
         rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - 200
@@ -2470,9 +2552,9 @@ class MTManager:
         body = tk.Frame(win, bg=BG, padx=28, pady=20); body.pack(fill="both", expand=True)
         tk.Label(body, text="\u21ba", bg=BG, fg=ACCENT3,
                  font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
-        tk.Label(body, text="Update berhasil dipasang!",
+        tk.Label(body, text="Update installed successfully!",
                  bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
-        tk.Label(body, text="Restart aplikasi untuk menerapkan perubahan.",
+        tk.Label(body, text="Restart the app to apply changes.",
                  bg=BG, fg=FG2, font=(f, 9), anchor="w").grid(row=1, column=1, sticky="w", pady=(4,0))
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
         foot = tk.Frame(win, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
@@ -2483,16 +2565,74 @@ class MTManager:
             import sys, os
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
-        r_h, _ = make_pill_btn(fi, "\u21bb  Restart Aplikasi", _restart,
+        r_h, _ = make_pill_btn(fi, "\u21bb  Restart App", _restart,
                                bg=ACCENT_DIM, fg=ACCENT, hover_bg="#1d2b36",
                                font_size=9, padx=20, pady=6, radius=7)
         r_h.pack(side="right", pady=8, padx=(0,6))
-        ok_h, _ = make_pill_btn(fi, "Nanti", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+        ok_h, _ = make_pill_btn(fi, "Later", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
                                  font_size=9, padx=20, pady=6, radius=7)
         ok_h.pack(side="right", pady=8)
-        self._status("Update baru tersedia \u2014 restart untuk menerapkan.")
+        self._status("A new update is available \u2014 restart to apply.")
 
     # ── Autostart canvas ──────────────────────────────────────────────────────
+    # ── Autostart switch (info bar) ─────────────────────────────────────────────
+    def _draw_as_switch(self, on, enabled=True):
+        c = self._as_switch
+        c.delete("all")
+        w, h   = 38, 18
+        tw, th = 34, 16
+        cx, cy = w // 2, h // 2
+        tx1, tx2 = cx - tw // 2, cx + tw // 2
+        ty1, ty2 = cy - th // 2, cy + th // 2
+        r = th // 2
+        thumb_r = 6
+        if not enabled:
+            track, thumb, on = "#1c2636", "#3a4658", False
+        else:
+            track = AS_COLOR_ON if on else AS_COLOR_OFF
+            thumb = AS_THUMB_COL
+        pts = [tx1+r,ty1, tx2-r,ty1, tx2,ty1, tx2,ty1+r,
+               tx2,ty2-r, tx2,ty2, tx2-r,ty2, tx1+r,ty2,
+               tx1,ty2, tx1,ty2-r, tx1,ty1+r, tx1,ty1, tx1+r,ty1]
+        c.create_polygon(pts, smooth=True, fill=track, outline="")
+        thumb_cx = (tx2 - r) if on else (tx1 + r)
+        c.create_oval(thumb_cx - thumb_r, cy - thumb_r,
+                      thumb_cx + thumb_r, cy + thumb_r, fill=thumb, outline="")
+
+    def _update_as_switch(self, t):
+        if t is None:
+            self._draw_as_switch(False, enabled=False)
+            self._as_switch_lbl.config(text="—", fg=FG3)
+            self._as_switch.config(cursor="arrow")
+            return
+        on = be.autostart_is_on(t)
+        self._draw_as_switch(on, enabled=True)
+        self._as_switch_lbl.config(text="ON" if on else "OFF",
+                                   fg=ACCENT3 if on else FG3)
+        self._as_switch.config(cursor="hand2")
+
+    def _toggle_selected_autostart(self, _=None):
+        t = self._terminal(silent=True)
+        if not t:
+            self._status("Select a terminal first to configure autostart.")
+            return
+        new_state = not be.autostart_is_on(t)
+        ok = be.autostart_set(
+            t, new_state,
+            lambda t_: be.find_exe(t_, "terminal.exe", "terminal64.exe"))
+        if new_state and not ok:
+            themed_popup(self.root, "error", "Autostart Failed",
+                f"File terminal.exe / terminal64.exe not found\n"
+                f"for {t['name']} ({t['type']}).\n\nAutostart could not be created.")
+            return
+        sel = self.term_tree.selection()
+        if sel:
+            self._as_state_cache[sel[0]] = new_state
+        self._update_as_switch(t)
+        self._draw_as_canvas()
+        self._status(f"Autostart {t['name']} → {'ON' if new_state else 'OFF'}")
+
+    # ── Autostart overview (sidebar) ────────────────────────────────────────────
     def _draw_as_canvas(self):
         if getattr(self, "_as_draw_id", None):
             self._as_canvas.after_cancel(self._as_draw_id)
@@ -2512,11 +2652,10 @@ class MTManager:
             return
         yview         = self.term_tree.yview()
         scroll_offset = int(yview[0] * len(all_rows) * rh)
-        cx = cw // 2; tw = AS_TRACK_W; th = AS_TRACK_H
-        tr = th >> 1; thumb_r = AS_THUMB_R
+        cx = cw // 2
         hover = getattr(self, "_as_hover_iid", None)
-        tx1 = cx - (tw >> 1); tx2 = cx + (tw >> 1)
         as_cache = self._as_state_cache
+        dot_r = 5
 
         for idx, iid in enumerate(all_rows):
             if iid not in iid_map:
@@ -2528,20 +2667,18 @@ class MTManager:
             if on is None:
                 on = be.autostart_is_on(iid_map[iid])
                 as_cache[iid] = on
-            is_hover  = (iid == hover)
-            ty1 = y_center - (th >> 1); ty2 = y_center + (th >> 1)
-            track_col = AS_COLOR_ON if on else AS_COLOR_OFF
-            if is_hover:
-                track_col = "#00e6ac" if on else "#3a5570"
-            r   = tr
-            pts = [tx1+r,ty1, tx2-r,ty1, tx2,ty1, tx2,ty1+r,
-                   tx2,ty2-r, tx2,ty2, tx2-r,ty2, tx1+r,ty2,
-                   tx1,ty2, tx1,ty2-r, tx1,ty1+r, tx1,ty1, tx1+r,ty1]
-            c.create_polygon(pts, smooth=True, fill=track_col, outline="")
-            thumb_cx = (tx2 - r) if on else (tx1 + r)
-            c.create_oval(thumb_cx - thumb_r, y_center - thumb_r,
-                          thumb_cx + thumb_r, y_center + thumb_r,
-                          fill=AS_THUMB_COL, outline="")
+            is_hover = (iid == hover)
+            # Indikator status (read-only) — kontrol ada di info bar
+            if on:
+                fill = "#00e6ac" if is_hover else AS_COLOR_ON
+                c.create_oval(cx - dot_r, y_center - dot_r,
+                              cx + dot_r, y_center + dot_r,
+                              fill=fill, outline="")
+            else:
+                ring = "#3a5570" if is_hover else AS_COLOR_OFF
+                c.create_oval(cx - dot_r, y_center - dot_r,
+                              cx + dot_r, y_center + dot_r,
+                              fill="", outline=ring, width=2)
 
     def _as_y_to_iid(self, y: int):
         rh       = 44
@@ -2557,21 +2694,13 @@ class MTManager:
         return iid if iid in getattr(self, "_iid_to_terminal", {}) else None
 
     def _on_as_click(self, event):
+        # Kolom ini kini hanya overview: klik = pilih terminal,
+        # pengaturan autostart dilakukan lewat switch di info bar.
         iid = self._as_y_to_iid(event.y)
         if iid is None:
             return
-        t         = self._iid_to_terminal[iid]
-        new_state = not be.autostart_is_on(t)
-        ok        = be.autostart_set(t, new_state,
-                       lambda t_: be.find_exe(t_, "terminal.exe", "terminal64.exe"))
-        if new_state and not ok:
-            themed_popup(self.root, "error", "Autostart Gagal",
-                f"File terminal.exe / terminal64.exe tidak ditemukan\n"
-                f"untuk {t['name']} ({t['type']}).\n\nAutostart tidak dapat dibuat.")
-            return
-        self._as_state_cache[iid] = new_state
-        self._draw_as_canvas()
-        self._status(f"Autostart {t['name']} \u2192 {'ON' if new_state else 'OFF'}")
+        self.term_tree.selection_set(iid)
+        self.term_tree.see(iid)
 
     def _on_as_motion(self, event):
         iid = self._as_y_to_iid(event.y)
@@ -2581,7 +2710,7 @@ class MTManager:
             self._as_cancel_tooltip()
             if iid is not None:
                 self._as_tooltip_id = self._as_canvas.after(
-                    280, lambda: self._as_show_tooltip(event.x_root, event.y_root))
+                    650, lambda: self._as_show_tooltip(event.x_root, event.y_root))
 
     def _on_as_leave(self, _=None):
         if self._as_hover_iid is not None:
@@ -2605,7 +2734,7 @@ class MTManager:
         tw.configure(bg=BORDER2); tw.attributes("-topmost", True)
         outer = tk.Frame(tw, bg=BORDER2, padx=1, pady=1); outer.pack()
         inner = tk.Frame(outer, bg=BG3, padx=12, pady=7); inner.pack()
-        tk.Label(inner, text="Aktifkan/Nonaktifkan autostart MT saat VPS restart",
+        tk.Label(inner, text="Autostart status — select a terminal, then toggle via the switch in the info panel",
                  bg=BG3, fg=FG2, font=(self._font, 9), wraplength=260, justify="left").pack()
         tw.update_idletasks()
         tw_ = tw.winfo_reqwidth(); th_ = tw.winfo_reqheight()
@@ -2687,8 +2816,8 @@ class MTManager:
 
         n = len(found)
         if hasattr(self, "_term_count_var"):
-            self._term_count_var.set(f"{n} terminal terdeteksi")
-        self._status(f"{n} terminal ditemukan.")
+            self._term_count_var.set(f"{n} terminal(s) detected")
+        self._status(f"{n} terminal(s) found.")
 
         if not silent:
             self._show_scan_result(found)
@@ -2699,17 +2828,17 @@ class MTManager:
         mt5_count = sum(1 for t in found if t["type"] == "MT5")
         n = len(found)
 
-        dlg = tk.Toplevel(self.root); dlg.title("Scan Selesai")
+        dlg = tk.Toplevel(self.root); dlg.title("Scan Complete")
         dlg.configure(bg=BG); dlg.resizable(False, False); dlg.attributes("-topmost", True)
         hdr = tk.Frame(dlg, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
         hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
-        tk.Label(hdr_inner, text="\u2713  Scan Selesai",
+        tk.Label(hdr_inner, text="\u2713  Scan Complete",
                  bg=BG2, fg="#5ecf3e", font=(f, 12, "bold")).pack(side="left", fill="y")
         tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
         body = tk.Frame(dlg, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
         tk.Label(body, text="\u2713", bg=BG, fg="#5ecf3e",
                  font=(f, 22)).grid(row=0, column=0, rowspan=3, padx=(0,16), sticky="n")
-        tk.Label(body, text=f"Ditemukan {n} terminal MetaTrader.",
+        tk.Label(body, text=f"Found {n} MetaTrader terminal(s).",
                  bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
         info_box = tk.Frame(body, bg=BG3, padx=14, pady=10)
         info_box.grid(row=1, column=1, sticky="ew", pady=(10,0))
@@ -2728,7 +2857,7 @@ class MTManager:
                 tk.Label(info_box, text=f"  {t['type']}  {t['name']}",
                          bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
             if len(found) > 8:
-                tk.Label(info_box, text=f"  \u2026 dan {len(found)-8} lainnya",
+                tk.Label(info_box, text=f"  \u2026 and {len(found)-8} more",
                          bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
         tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
         foot = tk.Frame(dlg, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)

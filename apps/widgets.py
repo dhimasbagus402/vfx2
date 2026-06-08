@@ -16,15 +16,22 @@ _FONT_CACHE: dict     = {}
 _FONT_OBJ_CACHE: dict = {}
 
 
-def resolve_font(preferred, fallback="DejaVu Sans Mono") -> str:
-    if preferred in _FONT_CACHE:
-        return _FONT_CACHE[preferred]
+def resolve_font(preferred, fallback=None) -> str:
+    """preferred: nama font tunggal ATAU daftar kandidat (yang pertama
+    tersedia dipakai). Bila tak ada yang cocok: pakai `fallback`, atau
+    kandidat terakhir (untuk daftar), atau `preferred` apa adanya."""
+    key = tuple(preferred) if isinstance(preferred, (list, tuple)) else preferred
+    if key in _FONT_CACHE:
+        return _FONT_CACHE[key]
     try:
-        fams   = tkf.families()
-        result = preferred if preferred in fams else fallback
+        fams = set(tkf.families())
     except Exception:
-        result = fallback
-    _FONT_CACHE[preferred] = result
+        fams = set()
+    candidates = list(preferred) if isinstance(preferred, (list, tuple)) else [preferred]
+    result = next((c for c in candidates if c in fams), None)
+    if result is None:
+        result = fallback if fallback is not None else candidates[-1]
+    _FONT_CACHE[key] = result
     return result
 
 
@@ -272,7 +279,7 @@ class RoundScrollbar(tk.Canvas):
 class Tooltip:
     """Tooltip ringan: satu Toplevel di-reuse (withdraw/deiconify) bukan destroy/recreate."""
 
-    def __init__(self, widget, text, delay=280, position="below"):
+    def __init__(self, widget, text, delay=650, position="below"):
         self.widget   = widget
         self.text     = text
         self.delay    = delay
