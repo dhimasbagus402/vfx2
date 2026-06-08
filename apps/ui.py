@@ -595,7 +595,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -1375,7 +1375,9 @@ class MTManager:
             tk.Label(row, text=val, bg=BG3, fg=FG2, font=(fm, 9), anchor="w").pack(side="left")
         tk.Frame(info_box, bg=BORDER, height=1).pack(fill="x", pady=(8,6))
         for lf in log_files[:8]:
-            tk.Label(info_box, text=f"  {lf.name}", bg=BG3, fg=FG3,
+            try:    _display = str(lf.relative_to(terminal_path))
+            except: _display = lf.name
+            tk.Label(info_box, text=f"  {_display}", bg=BG3, fg=FG3,
                      font=(fm, 8), anchor="w").pack(anchor="w")
         if len(log_files) > 8:
             tk.Label(info_box, text=f"  \u2026 and {len(log_files)-8} more file(s)",
@@ -2522,7 +2524,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")
