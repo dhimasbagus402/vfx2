@@ -600,7 +600,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx" / "update.sh"
+            update_sh = Path.home() / "vfx2" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -2554,7 +2554,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx" / "update.sh"
+        update_sh = Path.home() / "vfx2" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")
