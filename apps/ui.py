@@ -595,7 +595,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -863,6 +863,15 @@ class MTManager:
         return t.get({"Expert":"experts","Indicator":"indicators",
                       "Script":"scripts","Log":"logs"}.get(label, "experts"))
 
+    def _resolve_path(self, t, cat, fname):
+        """Resolve path lengkap dari (cat, fname).
+        Untuk Log, fname adalah relative path dari terminal root sehingga
+        langsung di-join ke t['path']. Untuk kategori lain tetap pakai _folder_for.
+        """
+        if cat == "Log":
+            return Path(t["path"]) / fname
+        return self._folder_for(t, cat) / fname
+
     # ── Context Menu (klik kanan tabel file) ──────────────────────────────────
     def _on_file_right_click(self, event):
         """Tampilkan context menu Copy/Cut/Paste/Delete saat klik kanan di tabel."""
@@ -988,7 +997,7 @@ class MTManager:
             try:
                 fname = self.file_tree.item(iid, "values")[0]
                 cat   = self.cat_tree.item(iid, "values")[0]
-                src   = self._folder_for(t, cat) / fname
+                src   = self._resolve_path(t, cat, fname)
                 if src.exists():
                     targets.append((src, fname, cat))
             except Exception:
@@ -1002,7 +1011,7 @@ class MTManager:
         cat, fname = self._file_info()
         if not fname:
             return []
-        src = self._folder_for(t, cat) / fname
+        src = self._resolve_path(t, cat, fname)
         if not src.exists():
             return []
         return [(src, fname, cat)]
@@ -1266,7 +1275,7 @@ class MTManager:
                 try:
                     v = self.file_tree.item(iid, "values"); fname = v[0]
                     cat = self.cat_tree.item(iid, "values")[0]
-                    path = self._folder_for(t, cat) / fname
+                    path = self._resolve_path(t, cat, fname)
                     targets.append((fname, path))
                 except Exception:
                     pass
@@ -1289,7 +1298,7 @@ class MTManager:
         cat, fname = self._file_info()
         if not fname:
             self._status("Check the files to delete, or select a row from the table."); return
-        target = self._folder_for(t, cat) / fname
+        target = self._resolve_path(t, cat, fname)
         if not target.exists():
             self._status(f"File not found: {target}"); return
         def _do_single():
@@ -2524,7 +2533,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")

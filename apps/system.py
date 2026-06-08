@@ -610,10 +610,19 @@ def autostart_set(t: dict, enable: bool, find_exe_fn) -> bool:
 
 # ── File list scanning ────────────────────────────────────────────────────────
 def scan_terminal_files(t: dict) -> list[tuple]:
-    """Return list of (label, fname, sz, mtime) untuk semua file di terminal t."""
+    """Return list of (label, fname, sz, mtime) untuk semua file di terminal t.
+
+    Untuk kategori non-Log, fname adalah nama file biasa.
+    Untuk kategori Log, fname adalah relative path dari terminal root
+    (misal 'logs/20241201.log' atau 'Tester/Agent-127.0.0.1-3000/logs/20241201.log')
+    agar file dengan nama sama dari folder berbeda tetap unik di tabel.
+    """
     rows = []
+    terminal_path = Path(t["path"])
+
+    # Expert / Indicator / Script: scan seperti biasa
     for key, label in (("experts", "Expert"), ("indicators", "Indicator"),
-                        ("scripts", "Script"), ("logs", "Log")):
+                       ("scripts", "Script")):
         folder = t.get(key)
         if not (folder and folder.exists()):
             continue
@@ -633,6 +642,48 @@ def scan_terminal_files(t: dict) -> list[tuple]:
             sz = f"{kb:.1f} KB" if kb < 1024 else f"{kb / 1024:.2f} MB"
             mtime = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
             rows.append((label, e.name, sz, mtime))
+
+    # Log: kumpulkan semua folder logs termasuk Tester/logs dan Tester/Agent*/logs
+    log_dirs = []
+    _main_logs = t.get("logs")
+    if _main_logs and _main_logs.exists():
+        log_dirs.append(_main_logs)
+    _tester_logs = terminal_path / "Tester" / "logs"
+    if _tester_logs.exists():
+        log_dirs.append(_tester_logs)
+    _tester_dir = terminal_path / "Tester"
+    if _tester_dir.exists():
+        try:
+            for _agent_dir in sorted(_tester_dir.iterdir()):
+                if _agent_dir.is_dir() and _agent_dir.name.startswith("Agent"):
+                    _agent_logs = _agent_dir / "logs"
+                    if _agent_logs.exists():
+                        log_dirs.append(_agent_logs)
+        except OSError:
+            pass
+
+    for folder in log_dirs:
+        try:
+            entries = sorted(
+                (e for e in os.scandir(folder) if e.is_file(follow_symlinks=False)),
+                key=lambda e: e.name,
+            )
+        except OSError:
+            continue
+        for e in entries:
+            try:
+                st = e.stat()
+            except OSError:
+                continue
+            kb = st.st_size / 1024
+            sz = f"{kb:.1f} KB" if kb < 1024 else f"{kb / 1024:.2f} MB"
+            mtime = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
+            try:
+                rel = str(Path(e.path).relative_to(terminal_path))
+            except ValueError:
+                rel = e.name
+            rows.append(("Log", rel, sz, mtime))
+
     return rows
 
 
