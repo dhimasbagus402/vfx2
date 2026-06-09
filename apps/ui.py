@@ -564,6 +564,12 @@ class MTManager:
         self._disk_tooltips = [Tooltip(disk_fr, "Disk: belum diukur", delay=150)]
         for _w in disk_fr.winfo_children():
             self._disk_tooltips.append(Tooltip(_w, "Disk: belum diukur", delay=150))
+        # Refresh data disk setiap kali hover agar tooltip selalu up-to-date
+        def _on_disk_hover(e=None):
+            t = self._terminal(silent=True)
+            self._refresh_disk(t["path"] if t else None)
+        for _w in [disk_fr] + list(disk_fr.winfo_children()):
+            _w.bind("<Enter>", _on_disk_hover, add="+")
 
         self.auto_update_var = tk.BooleanVar(value=self._cfg.get("auto_update", True))
 
@@ -600,7 +606,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -2554,7 +2560,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")
