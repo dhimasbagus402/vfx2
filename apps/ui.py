@@ -606,7 +606,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -1387,23 +1387,38 @@ class MTManager:
                 pass
 
         # ── Kumpulkan history files (.hcc) ────────────────────────────────────
+        def _find_child_ci(parent, name):
+            name_lo = name.lower()
+            try:
+                for e in parent.iterdir():
+                    if e.is_dir() and e.name.lower() == name_lo:
+                        return e
+            except OSError:
+                pass
+            return None
+
+        _SKIP_BASES   = {"custom", "default"}
+        _bases_root   = _find_child_ci(terminal_path, "bases")
+        _tester_dir_h = _find_child_ci(terminal_path, "tester")
+        _tester_bases = _find_child_ci(_tester_dir_h, "bases") if _tester_dir_h else None
+
         _history_roots = []
-        _bases = terminal_path / "bases"
-        if _bases.exists():
-            _history_roots.append(_bases)
-        _tester_bases = terminal_path / "Tester" / "bases"
-        if _tester_bases.exists():
-            _history_roots.append(_tester_bases)
+        if _bases_root:
+            _history_roots.append((_bases_root, True))
+        if _tester_bases:
+            _history_roots.append((_tester_bases, False))
 
         hcc_files = []
-        for _base_root in _history_roots:
+        for _base_root, _apply_skip in _history_roots:
             try:
                 _accounts = [e for e in _base_root.iterdir() if e.is_dir()]
             except OSError:
                 continue
             for _account in _accounts:
-                _hist_dir = _account / "history"
-                if not _hist_dir.exists():
+                if _apply_skip and _account.name.lower() in _SKIP_BASES:
+                    continue
+                _hist_dir = _find_child_ci(_account, "history")
+                if not _hist_dir:
                     continue
                 try:
                     _pairs = [e for e in _hist_dir.iterdir() if e.is_dir()]
@@ -2600,7 +2615,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")

@@ -684,23 +684,44 @@ def scan_terminal_files(t: dict) -> list[tuple]:
                 rel = e.name
             rows.append(("Log", rel, sz, mtime))
 
-    # History (.hcc): scan Bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
-    _history_roots = []
-    _bases = terminal_path / "bases"
-    if _bases.exists():
-        _history_roots.append(_bases)
-    _tester_bases = terminal_path / "Tester" / "bases"
-    if _tester_bases.exists():
-        _history_roots.append(_tester_bases)
+    # History (.hcc): scan bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
+    # Cari folder secara case-insensitive karena MT di Wine bisa menghasilkan casing berbeda
+    def _find_child_ci(parent: Path, name: str) -> Path | None:
+        """Kembalikan subfolder di parent yang namanya cocok case-insensitive, atau None."""
+        name_lo = name.lower()
+        try:
+            for e in parent.iterdir():
+                if e.is_dir() and e.name.lower() == name_lo:
+                    return e
+        except OSError:
+            pass
+        return None
 
-    for _base_root in _history_roots:
+    # Tentukan root bases (case-insensitive)
+    _SKIP_BASES = {"custom", "default"}   # diabaikan khusus untuk folder /bases utama
+    _bases_root    = _find_child_ci(terminal_path, "bases")
+    _tester_dir_h  = _find_child_ci(terminal_path, "tester")
+    _tester_bases  = _find_child_ci(_tester_dir_h, "bases") if _tester_dir_h else None
+
+    # list of (bases_path, apply_skip)
+    _history_roots = []
+    if _bases_root:
+        _history_roots.append((_bases_root, True))   # skip Custom & Default
+    if _tester_bases:
+        _history_roots.append((_tester_bases, False)) # scan semua
+
+    for _base_root, _apply_skip in _history_roots:
         try:
             _accounts = [e for e in _base_root.iterdir() if e.is_dir()]
         except OSError:
             continue
         for _account in _accounts:
-            _hist_dir = _account / "history"
-            if not _hist_dir.exists():
+            # Abaikan folder Custom dan Default khusus untuk bases utama
+            if _apply_skip and _account.name.lower() in _SKIP_BASES:
+                continue
+            # Cari subfolder history (case-insensitive)
+            _hist_dir = _find_child_ci(_account, "history")
+            if not _hist_dir:
                 continue
             try:
                 _pairs = [e for e in _hist_dir.iterdir() if e.is_dir()]
