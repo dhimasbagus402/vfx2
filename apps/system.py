@@ -684,60 +684,34 @@ def scan_terminal_files(t: dict) -> list[tuple]:
                 rel = e.name
             rows.append(("Log", rel, sz, mtime))
 
-    # History (.hcc): scan bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
-    # Helper: cari subfolder case-insensitive
-    def _ci_dir(parent: Path, name: str) -> Path | None:
-        lo = name.lower()
+    # History (.hcs): scan Bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
+    _history_roots = []
+    _bases = terminal_path / "bases"
+    if _bases.exists():
+        _history_roots.append(_bases)
+    _tester_bases = terminal_path / "Tester" / "bases"
+    if _tester_bases.exists():
+        _history_roots.append(_tester_bases)
+
+    for _base_root in _history_roots:
         try:
-            for e in parent.iterdir():
-                if e.is_dir() and e.name.lower() == lo:
-                    return e
-        except OSError:
-            pass
-        return None
-
-    _SKIP_ACCT = {"custom", "default"}   # abaikan hanya di bases utama
-
-    # (path_bases, apply_skip)
-    _history_roots: list[tuple[Path, bool]] = []
-    for _bname in ("bases", "Bases"):           # cek kedua casing umum
-        _p = terminal_path / _bname
-        if _p.is_dir():
-            _history_roots.append((_p, True))
-            break
-    for _tname in ("Tester", "tester"):         # Tester sudah terbukti kapital
-        _tp = terminal_path / _tname
-        if _tp.is_dir():
-            _tb = _ci_dir(_tp, "bases")
-            if _tb:
-                _history_roots.append((_tb, False))
-            break
-
-    for _base_root, _apply_skip in _history_roots:
-        try:
-            _accounts = sorted(_base_root.iterdir(), key=lambda e: e.name)
+            _accounts = [e for e in _base_root.iterdir() if e.is_dir()]
         except OSError:
             continue
         for _account in _accounts:
-            if not _account.is_dir():
-                continue
-            if _apply_skip and _account.name.lower() in _SKIP_ACCT:
-                continue
-            _hist_dir = _ci_dir(_account, "history")
-            if not _hist_dir:
+            _hist_dir = _account / "history"
+            if not _hist_dir.exists():
                 continue
             try:
-                _pairs = sorted(_hist_dir.iterdir(), key=lambda e: e.name)
+                _pairs = [e for e in _hist_dir.iterdir() if e.is_dir()]
             except OSError:
                 continue
             for _pair in _pairs:
-                if not _pair.is_dir():
-                    continue
                 try:
                     entries = sorted(
                         (e for e in os.scandir(_pair)
                          if e.is_file(follow_symlinks=False)
-                         and e.name.lower().endswith(".hcc")),
+                         and e.name.lower().endswith(".hcs")),
                         key=lambda e: e.name,
                     )
                 except OSError:
