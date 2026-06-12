@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from urllib.request import urlopen, Request
 
-__version__ = "2.0"
+__version__ = "2.2"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_PATH = Path.home() / ".config" / "mt_manager" / "settings.json"
@@ -685,8 +685,8 @@ def scan_terminal_files(t: dict) -> list[tuple]:
             rows.append(("Log", rel, sz, mtime))
 
     # History (.hcc): scan bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
-    # Helper case-insensitive: cari subfolder berdasarkan nama tanpa peduli casing
-    def _ci_subdir(parent: Path, name: str) -> Path | None:
+    # Helper: cari subfolder case-insensitive
+    def _ci_dir(parent: Path, name: str) -> Path | None:
         lo = name.lower()
         try:
             for e in parent.iterdir():
@@ -696,21 +696,22 @@ def scan_terminal_files(t: dict) -> list[tuple]:
             pass
         return None
 
-    _SKIP_ACCT = {"custom", "default"}  # diabaikan hanya di bases utama (bukan Tester)
+    _SKIP_ACCT = {"custom", "default"}   # abaikan hanya di bases utama
 
-    # Bangun daftar (bases_path, apply_skip)
-    _history_roots = []
-    _bases_main = _ci_subdir(terminal_path, "bases")
-    if _bases_main:
-        _history_roots.append((_bases_main, True))
-    # Tester sudah terbukti kapital — cek langsung, fallback ke ci jika perlu
-    _tester_path = terminal_path / "Tester"
-    if not _tester_path.is_dir():
-        _tester_path = _ci_subdir(terminal_path, "tester")
-    if _tester_path:
-        _tester_bases = _ci_subdir(_tester_path, "bases")
-        if _tester_bases:
-            _history_roots.append((_tester_bases, False))
+    # (path_bases, apply_skip)
+    _history_roots: list[tuple[Path, bool]] = []
+    for _bname in ("bases", "Bases"):           # cek kedua casing umum
+        _p = terminal_path / _bname
+        if _p.is_dir():
+            _history_roots.append((_p, True))
+            break
+    for _tname in ("Tester", "tester"):         # Tester sudah terbukti kapital
+        _tp = terminal_path / _tname
+        if _tp.is_dir():
+            _tb = _ci_dir(_tp, "bases")
+            if _tb:
+                _history_roots.append((_tb, False))
+            break
 
     for _base_root, _apply_skip in _history_roots:
         try:
@@ -722,7 +723,7 @@ def scan_terminal_files(t: dict) -> list[tuple]:
                 continue
             if _apply_skip and _account.name.lower() in _SKIP_ACCT:
                 continue
-            _hist_dir = _ci_subdir(_account, "history")
+            _hist_dir = _ci_dir(_account, "history")
             if not _hist_dir:
                 continue
             try:

@@ -606,7 +606,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -892,10 +892,10 @@ class MTManager:
 
     def _resolve_path(self, t, cat, fname):
         """Resolve path lengkap dari (cat, fname).
-        Untuk Log, fname adalah relative path dari terminal root sehingga
+        Untuk Log dan History, fname adalah relative path dari terminal root sehingga
         langsung di-join ke t['path']. Untuk kategori lain tetap pakai _folder_for.
         """
-        if cat == "Log":
+        if cat in ("Log", "History"):
             return Path(t["path"]) / fname
         return self._folder_for(t, cat) / fname
 
@@ -1387,7 +1387,7 @@ class MTManager:
                 pass
 
         # ── Kumpulkan history files (.hcc) ────────────────────────────────────
-        def _ci_subdir(parent, name):
+        def _ci_dir(parent, name):
             lo = name.lower()
             try:
                 for e in parent.iterdir():
@@ -1397,18 +1397,20 @@ class MTManager:
                 pass
             return None
 
-        _SKIP_ACCT  = {"custom", "default"}
+        _SKIP_ACCT = {"custom", "default"}
         _history_roots = []
-        _bases_main = _ci_subdir(terminal_path, "bases")
-        if _bases_main:
-            _history_roots.append((_bases_main, True))
-        _tester_path = terminal_path / "Tester"
-        if not _tester_path.is_dir():
-            _tester_path = _ci_subdir(terminal_path, "tester")
-        if _tester_path:
-            _tester_bases = _ci_subdir(_tester_path, "bases")
-            if _tester_bases:
-                _history_roots.append((_tester_bases, False))
+        for _bname in ("bases", "Bases"):
+            _p = terminal_path / _bname
+            if _p.is_dir():
+                _history_roots.append((_p, True))
+                break
+        for _tname in ("Tester", "tester"):
+            _tp = terminal_path / _tname
+            if _tp.is_dir():
+                _tb = _ci_dir(_tp, "bases")
+                if _tb:
+                    _history_roots.append((_tb, False))
+                break
 
         hcc_files = []
         for _base_root, _apply_skip in _history_roots:
@@ -1421,7 +1423,7 @@ class MTManager:
                     continue
                 if _apply_skip and _account.name.lower() in _SKIP_ACCT:
                     continue
-                _hist_dir = _ci_subdir(_account, "history")
+                _hist_dir = _ci_dir(_account, "history")
                 if not _hist_dir:
                     continue
                 try:
@@ -1431,13 +1433,12 @@ class MTManager:
                 for _pair in _pairs:
                     try:
                         hcc_files.extend([
-                            e.path for e in os.scandir(_pair)
+                            Path(e.path) for e in os.scandir(_pair)
                             if e.is_file(follow_symlinks=False)
                             and e.name.lower().endswith(".hcc")
                         ])
                     except OSError:
                         continue
-        hcc_files = [Path(p) for p in hcc_files]
 
         all_files   = log_files + hcc_files
         if not all_files:
@@ -2619,7 +2620,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")
