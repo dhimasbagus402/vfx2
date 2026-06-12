@@ -432,7 +432,7 @@ def run_mt_duplicate_bg(src_folder: Path, base_name: str, linux_base: Path,
                 except Exception as e:
                     launch_errors.append(f"[{dst_path.name}] {e}")
             if j < len(launched) - 1:
-                time.sleep(0.3)
+                time.sleep(0.1)
 
         if on_finish:
             was_cancelled = cancelled_flag[0]
@@ -683,6 +683,52 @@ def scan_terminal_files(t: dict) -> list[tuple]:
             except ValueError:
                 rel = e.name
             rows.append(("Log", rel, sz, mtime))
+
+    # History (.hcc): scan Bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
+    _history_roots = []
+    _bases = terminal_path / "bases"
+    if _bases.exists():
+        _history_roots.append(_bases)
+    _tester_bases = terminal_path / "Tester" / "bases"
+    if _tester_bases.exists():
+        _history_roots.append(_tester_bases)
+
+    for _base_root in _history_roots:
+        try:
+            _accounts = [e for e in _base_root.iterdir() if e.is_dir()]
+        except OSError:
+            continue
+        for _account in _accounts:
+            _hist_dir = _account / "history"
+            if not _hist_dir.exists():
+                continue
+            try:
+                _pairs = [e for e in _hist_dir.iterdir() if e.is_dir()]
+            except OSError:
+                continue
+            for _pair in _pairs:
+                try:
+                    entries = sorted(
+                        (e for e in os.scandir(_pair)
+                         if e.is_file(follow_symlinks=False)
+                         and e.name.lower().endswith(".hcc")),
+                        key=lambda e: e.name,
+                    )
+                except OSError:
+                    continue
+                for e in entries:
+                    try:
+                        st = e.stat()
+                    except OSError:
+                        continue
+                    kb = st.st_size / 1024
+                    sz = f"{kb:.1f} KB" if kb < 1024 else f"{kb / 1024:.2f} MB"
+                    mtime = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
+                    try:
+                        rel = str(Path(e.path).relative_to(terminal_path))
+                    except ValueError:
+                        rel = e.name
+                    rows.append(("History", rel, sz, mtime))
 
     return rows
 
