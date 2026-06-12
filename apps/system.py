@@ -685,49 +685,53 @@ def scan_terminal_files(t: dict) -> list[tuple]:
             rows.append(("Log", rel, sz, mtime))
 
     # History (.hcc): scan bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
-    # Cari folder secara case-insensitive karena MT di Wine bisa menghasilkan casing berbeda
-    def _find_child_ci(parent: Path, name: str) -> Path | None:
-        """Kembalikan subfolder di parent yang namanya cocok case-insensitive, atau None."""
-        name_lo = name.lower()
+    # Helper case-insensitive: cari subfolder berdasarkan nama tanpa peduli casing
+    def _ci_subdir(parent: Path, name: str) -> Path | None:
+        lo = name.lower()
         try:
             for e in parent.iterdir():
-                if e.is_dir() and e.name.lower() == name_lo:
+                if e.is_dir() and e.name.lower() == lo:
                     return e
         except OSError:
             pass
         return None
 
-    # Tentukan root bases (case-insensitive)
-    _SKIP_BASES = {"custom", "default"}   # diabaikan khusus untuk folder /bases utama
-    _bases_root    = _find_child_ci(terminal_path, "bases")
-    _tester_dir_h  = _find_child_ci(terminal_path, "tester")
-    _tester_bases  = _find_child_ci(_tester_dir_h, "bases") if _tester_dir_h else None
+    _SKIP_ACCT = {"custom", "default"}  # diabaikan hanya di bases utama (bukan Tester)
 
-    # list of (bases_path, apply_skip)
+    # Bangun daftar (bases_path, apply_skip)
     _history_roots = []
-    if _bases_root:
-        _history_roots.append((_bases_root, True))   # skip Custom & Default
-    if _tester_bases:
-        _history_roots.append((_tester_bases, False)) # scan semua
+    _bases_main = _ci_subdir(terminal_path, "bases")
+    if _bases_main:
+        _history_roots.append((_bases_main, True))
+    # Tester sudah terbukti kapital — cek langsung, fallback ke ci jika perlu
+    _tester_path = terminal_path / "Tester"
+    if not _tester_path.is_dir():
+        _tester_path = _ci_subdir(terminal_path, "tester")
+    if _tester_path:
+        _tester_bases = _ci_subdir(_tester_path, "bases")
+        if _tester_bases:
+            _history_roots.append((_tester_bases, False))
 
     for _base_root, _apply_skip in _history_roots:
         try:
-            _accounts = [e for e in _base_root.iterdir() if e.is_dir()]
+            _accounts = sorted(_base_root.iterdir(), key=lambda e: e.name)
         except OSError:
             continue
         for _account in _accounts:
-            # Abaikan folder Custom dan Default khusus untuk bases utama
-            if _apply_skip and _account.name.lower() in _SKIP_BASES:
+            if not _account.is_dir():
                 continue
-            # Cari subfolder history (case-insensitive)
-            _hist_dir = _find_child_ci(_account, "history")
+            if _apply_skip and _account.name.lower() in _SKIP_ACCT:
+                continue
+            _hist_dir = _ci_subdir(_account, "history")
             if not _hist_dir:
                 continue
             try:
-                _pairs = [e for e in _hist_dir.iterdir() if e.is_dir()]
+                _pairs = sorted(_hist_dir.iterdir(), key=lambda e: e.name)
             except OSError:
                 continue
             for _pair in _pairs:
+                if not _pair.is_dir():
+                    continue
                 try:
                     entries = sorted(
                         (e for e in os.scandir(_pair)
