@@ -17,7 +17,7 @@ def handle_update_click(app):
     app: instance MTManager — butuh app.root, app._status(),
          dan app._show_update_popup(update_sh).
     """
-    update_sh = Path.home() / "vfx" / "update.sh"
+    update_sh = Path.home() / "vfx2" / "update.sh"
     if not update_sh.exists():
         themed_popup(app.root, "error", "Update Failed",
             f"Script not found:\n{update_sh}")
@@ -73,7 +73,7 @@ def auto_update_check(app):
     app: instance MTManager — butuh app.root, app._status(),
          dan app._show_auto_update_result().
     """
-    update_sh = Path.home() / "vfx" / "update.sh"
+    update_sh = Path.home() / "vfx2" / "update.sh"
     if not update_sh.exists():
         return
     app._status("Checking for updates automatically\u2026")
