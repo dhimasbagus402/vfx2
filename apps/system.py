@@ -686,12 +686,14 @@ def scan_terminal_files(t: dict) -> list[tuple]:
 
     # History (.hcs/.hcc): scan Bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
     _history_roots = []
-    _bases = terminal_path / "bases"
-    if _bases.exists():
+    _bases = _find_dir_ci(terminal_path, "bases")
+    if _bases:
         _history_roots.append(_bases)
-    _tester_bases = terminal_path / "Tester" / "bases"
-    if _tester_bases.exists():
-        _history_roots.append(_tester_bases)
+    _tester_root = _find_dir_ci(terminal_path, "tester")
+    if _tester_root:
+        _tester_bases = _find_dir_ci(_tester_root, "bases")
+        if _tester_bases:
+            _history_roots.append(_tester_bases)
 
     for _base_root in _history_roots:
         try:
@@ -699,8 +701,8 @@ def scan_terminal_files(t: dict) -> list[tuple]:
         except OSError:
             continue
         for _account in _accounts:
-            _hist_dir = _account / "history"
-            if not _hist_dir.exists():
+            _hist_dir = _find_dir_ci(_account, "history")
+            if not _hist_dir:
                 continue
             try:
                 _pairs = [e for e in _hist_dir.iterdir() if e.is_dir()]
