@@ -2624,21 +2624,7 @@ class MTManager:
                           on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx" / "update.sh"
-        if not update_sh.exists():
-            return
-        self._status("Checking for updates automatically\u2026")
-
-        def _on_new():
-            self.root.after(0, lambda: self._show_auto_update_result(True))
-
-        def _on_current():
-            self.root.after(0, lambda: self._status("App is up-to-date."))
-
-        def _on_err(msg):
-            self.root.after(0, lambda m=msg: self._status(m))
-
-        upd.run_auto_update_bg(update_sh, _on_new, _on_current, _on_err)
+        upd.auto_update_check(self)
 
     def _show_auto_update_result(self, has_update: bool):
         if not has_update:

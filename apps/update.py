@@ -17,7 +17,7 @@ def handle_update_click(app):
     app: instance MTManager — butuh app.root, app._status(),
          dan app._show_update_popup(update_sh).
     """
-    update_sh = Path.home() / "vfx2" / "update.sh"
+    update_sh = Path.home() / "vfx" / "update.sh"
     if not update_sh.exists():
         themed_popup(app.root, "error", "Update Failed",
             f"Script not found:\n{update_sh}")
@@ -65,3 +65,26 @@ def run_auto_update_bg(update_sh: Path, on_new_update, on_current, on_error):
         except Exception as e:
             on_error(f"Auto-update: {e}")
     threading.Thread(target=_run, daemon=True).start()
+
+
+def auto_update_check(app):
+    """Cek update otomatis saat startup (silent check).
+
+    app: instance MTManager — butuh app.root, app._status(),
+         dan app._show_auto_update_result().
+    """
+    update_sh = Path.home() / "vfx" / "update.sh"
+    if not update_sh.exists():
+        return
+    app._status("Checking for updates automatically\u2026")
+
+    def _on_new():
+        app.root.after(0, lambda: app._show_auto_update_result(True))
+
+    def _on_current():
+        app.root.after(0, lambda: app._status("App is up-to-date."))
+
+    def _on_err(msg):
+        app.root.after(0, lambda m=msg: app._status(m))
+
+    run_auto_update_bg(update_sh, _on_new, _on_current, _on_err)
