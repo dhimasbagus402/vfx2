@@ -607,13 +607,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx" / "update.sh"
-            if not update_sh.exists():
-                themed_popup(self.root, "error", "Update Failed",
-                    f"Script not found:\n{update_sh}")
-                return
-            self._status("Running update...")
-            self._show_update_popup(update_sh)
+            upd.handle_update_click(self)
 
         update_c.bind("<Configure>", lambda e: _draw_update_btn())
         update_c.bind("<Enter>",     lambda e: _draw_update_btn(hover=True))

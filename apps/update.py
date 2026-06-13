@@ -1,12 +1,29 @@
 """
 update.py — MT Manager
-Logika update aplikasi (jalankan update.sh, cek update otomatis saat startup).
-Tidak mengimport tkinter sama sekali.
+Logika update aplikasi (jalankan update.sh, cek update otomatis saat startup,
+serta handler klik tombol Update di sidebar).
 """
 
 import subprocess
 import threading
 from pathlib import Path
+
+from widgets import themed_popup
+
+
+def handle_update_click(app):
+    """Handler untuk klik tombol Update di sidebar.
+
+    app: instance MTManager — butuh app.root, app._status(),
+         dan app._show_update_popup(update_sh).
+    """
+    update_sh = Path.home() / "vfx" / "update.sh"
+    if not update_sh.exists():
+        themed_popup(app.root, "error", "Update Failed",
+            f"Script not found:\n{update_sh}")
+        return
+    app._status("Running update...")
+    app._show_update_popup(update_sh)
 
 
 def run_update_bg(update_sh: Path, on_done, on_fail):
