@@ -1415,6 +1415,8 @@ class MTManager:
             for _account in _accounts:
                 if not _account.is_dir():
                     continue
+                if _account.name.lower() == "default":
+                    continue
                 _hist_dir = _ci_dir(_account, "history")
                 if not _hist_dir:
                     continue

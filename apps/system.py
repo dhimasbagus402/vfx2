@@ -685,6 +685,7 @@ def scan_terminal_files(t: dict) -> list[tuple]:
             rows.append(("Log", rel, sz, mtime))
 
     # History (.hcs/.hcc): scan Bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
+    # Akun 'Default' (akun bawaan/contoh) di-skip.
     _history_roots = []
     _bases = _find_dir_ci(terminal_path, "bases")
     if _bases:
@@ -701,6 +702,8 @@ def scan_terminal_files(t: dict) -> list[tuple]:
         except OSError:
             continue
         for _account in _accounts:
+            if _account.name.lower() == "default":
+                continue
             _hist_dir = _find_dir_ci(_account, "history")
             if not _hist_dir:
                 continue
