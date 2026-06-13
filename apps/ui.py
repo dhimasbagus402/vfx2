@@ -606,7 +606,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -895,7 +895,7 @@ class MTManager:
         Untuk Log, fname adalah relative path dari terminal root sehingga
         langsung di-join ke t['path']. Untuk kategori lain tetap pakai _folder_for.
         """
-        if cat == "Log":
+        if cat in ("Log", "History"):
             return Path(t["path"]) / fname
         return self._folder_for(t, cat) / fname
 
@@ -1386,7 +1386,7 @@ class MTManager:
             except OSError:
                 pass
 
-        # ── Kumpulkan history files (.hcs) ────────────────────────────────────
+        # ── Kumpulkan history files (.hcc) ────────────────────────────────────
         _history_roots = []
         _bases = terminal_path / "bases"
         if _bases.exists():
@@ -1395,7 +1395,7 @@ class MTManager:
         if _tester_bases.exists():
             _history_roots.append(_tester_bases)
 
-        hcs_files = []
+        hcc_files = []
         for _base_root in _history_roots:
             try:
                 _accounts = [e for e in _base_root.iterdir() if e.is_dir()]
@@ -1411,19 +1411,19 @@ class MTManager:
                     continue
                 for _pair in _pairs:
                     try:
-                        hcs_files.extend([
+                        hcc_files.extend([
                             e.path for e in os.scandir(_pair)
                             if e.is_file(follow_symlinks=False)
-                            and e.name.lower().endswith(".hcs")
+                            and e.name.lower().endswith(".hcc")
                         ])
                     except OSError:
                         continue
-        hcs_files = [Path(p) for p in hcs_files]
+        hcc_files = [Path(p) for p in hcc_files]
 
-        all_files   = log_files + hcs_files
+        all_files   = log_files + hcc_files
         if not all_files:
             _info_popup("Tidak Ada File",
-                "Tidak ditemukan file log maupun history (.hcs) pada terminal ini.",
+                "Tidak ditemukan file log maupun history (.hcc) pada terminal ini.",
                 icon="\u26a0", icon_fg=WARN)
             return
 
@@ -1442,7 +1442,7 @@ class MTManager:
         info_box = tk.Frame(body, bg=BG3, padx=14, pady=10); info_box.pack(fill="x", pady=(0,14))
         for label, val in [("Terminal",  f"{t['type']} — {t['name']}"),
                            ("Log files", f"{len(log_files)} file"),
-                           ("History",   f"{len(hcs_files)} file (.hcs)"),
+                           ("History",   f"{len(hcc_files)} file (.hcc)"),
                            ("Total size", total_str)]:
             row = tk.Frame(info_box, bg=BG3); row.pack(fill="x", pady=1)
             tk.Label(row, text=f"{label:<12}", bg=BG3, fg=FG3, font=(f, 9),
@@ -1458,7 +1458,7 @@ class MTManager:
             tk.Label(info_box, text=f"  \u2026 and {len(all_files)-8} more file(s)",
                      bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
         tk.Label(body,
-                 text="Semua file log dan history (.hcs) akan dihapus permanen.\nTindakan ini tidak dapat dibatalkan.",
+                 text="Semua file log dan history (.hcc) akan dihapus permanen.\nTindakan ini tidak dapat dibatalkan.",
                  bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w").pack(anchor="w", pady=(0,4))
         tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
         foot = tk.Frame(dlg, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
@@ -2600,7 +2600,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")
