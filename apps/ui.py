@@ -13,6 +13,7 @@ import shutil
 import os
 
 import system as be
+import update as upd
 from widgets import (
     RoundedBox, RoundScrollbar, Tooltip, Badge, ProgressBar,
     make_pill_btn, themed_popup, resolve_font, get_font_obj,
@@ -606,7 +607,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -2624,12 +2625,12 @@ class MTManager:
             icon_lbl.config(text="\u2717", fg=DANGER)
             msg_var.set("Update failed."); sub_var.set(msg[:72]); ok_h.pack(side="right", pady=8)
 
-        be.run_update_bg(update_sh,
-                         on_done=lambda au: win.after(0, lambda: _on_done(au)),
-                         on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
+        upd.run_update_bg(update_sh,
+                          on_done=lambda au: win.after(0, lambda: _on_done(au)),
+                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")
@@ -2643,7 +2644,7 @@ class MTManager:
         def _on_err(msg):
             self.root.after(0, lambda m=msg: self._status(m))
 
-        be.run_auto_update_bg(update_sh, _on_new, _on_current, _on_err)
+        upd.run_auto_update_bg(update_sh, _on_new, _on_current, _on_err)
 
     def _show_auto_update_result(self, has_update: bool):
         if not has_update:
