@@ -819,6 +819,65 @@ def _scan_mt4_history_tester(t: dict) -> list[tuple]:
             rows.extend(_scan_files_to_rows(t_logs, terminal_path, "Log", (".log",)))
 
     return rows
+
+
+def collect_mt4_clear_extras(t: dict) -> tuple[list[Path], list[Path]]:
+    """Untuk MT4, kumpulkan file tambahan yang harus dihapus oleh
+    Clear Logs & History (yang tidak tercakup oleh pengumpulan
+    logs_dir/Tester/bases standar):
+      - /history/<server>/*.hst   (folder 'default' diabaikan) -> history
+      - /tester/history/*.fxt                                   -> history
+      - /tester/logs/*.log                                      -> logs
+
+    Return (extra_log_files, extra_history_files) sebagai list of Path.
+    """
+    extra_logs: list[Path] = []
+    extra_history: list[Path] = []
+    if t.get("type") != "MT4":
+        return extra_logs, extra_history
+    terminal_path = Path(t["path"])
+
+    hist_root = _find_dir_ci(terminal_path, "history")
+    if hist_root:
+        try:
+            servers = [e for e in hist_root.iterdir()
+                       if e.is_dir() and e.name.lower() != "default"]
+        except OSError:
+            servers = []
+        for srv in servers:
+            try:
+                extra_history.extend([
+                    Path(e.path) for e in os.scandir(srv)
+                    if e.is_file(follow_symlinks=False) and e.name.lower().endswith(".hst")
+                ])
+            except OSError:
+                continue
+
+    tester_root = _find_dir_ci(terminal_path, "tester")
+    if tester_root:
+        t_hist = _find_dir_ci(tester_root, "history")
+        if t_hist:
+            try:
+                extra_history.extend([
+                    Path(e.path) for e in os.scandir(t_hist)
+                    if e.is_file(follow_symlinks=False) and e.name.lower().endswith(".fxt")
+                ])
+            except OSError:
+                pass
+
+        t_logs = _find_dir_ci(tester_root, "logs")
+        if t_logs:
+            try:
+                extra_logs.extend([
+                    Path(e.path) for e in os.scandir(t_logs)
+                    if e.is_file(follow_symlinks=False) and e.name.lower().endswith(".log")
+                ])
+            except OSError:
+                pass
+
+    return extra_logs, extra_history
+
+
 def run_update_bg(update_sh: Path, on_done, on_fail):
     """Jalankan update.sh, panggil on_done(already_updated) atau on_fail(msg)."""
     def _run():

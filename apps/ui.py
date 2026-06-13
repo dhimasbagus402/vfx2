@@ -606,7 +606,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -1441,6 +1441,15 @@ class MTManager:
                         continue
 
         all_files   = log_files + hcs_files
+
+        # ── MT4: tambahkan history/*.hst (skip 'default'), tester/history/*.fxt,
+        #         dan tester/logs/*.log yang belum tercakup di atas ──
+        if t.get("type") == "MT4":
+            extra_logs, extra_history = be.collect_mt4_clear_extras(t)
+            log_files += extra_logs
+            hcs_files += extra_history
+            all_files += extra_logs + extra_history
+
         if not all_files:
             _info_popup("Tidak Ada File",
                 "Tidak ditemukan file log maupun history (.hcs) pada terminal ini.",
@@ -2620,7 +2629,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")
