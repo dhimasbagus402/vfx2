@@ -606,7 +606,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -1412,31 +1412,40 @@ class MTManager:
                     _history_roots.append((_tb, False))
                 break
 
+        import sys
         hcs_files = []
+        print(f"[DEBUG] terminal_path={terminal_path}", file=sys.stderr)
+        print(f"[DEBUG] _history_roots={_history_roots}", file=sys.stderr)
         for _base_root, _apply_skip in _history_roots:
             try:
                 _accounts = sorted(_base_root.iterdir(), key=lambda e: e.name)
             except OSError:
                 continue
+            print(f"[DEBUG] base_root={_base_root} accounts={[a.name for a in _accounts]}", file=sys.stderr)
             for _account in _accounts:
                 if not _account.is_dir():
                     continue
                 if _apply_skip and _account.name.lower() in _SKIP_ACCT:
+                    print(f"[DEBUG] skip {_account.name}", file=sys.stderr)
                     continue
                 _hist_dir = _ci_dir(_account, "history")
+                print(f"[DEBUG] account={_account.name} hist_dir={_hist_dir}", file=sys.stderr)
                 if not _hist_dir:
                     continue
                 try:
                     _pairs = [e for e in _hist_dir.iterdir() if e.is_dir()]
                 except OSError:
                     continue
+                print(f"[DEBUG] pairs={[p.name for p in _pairs]}", file=sys.stderr)
                 for _pair in _pairs:
                     try:
-                        hcs_files.extend([
+                        found = [
                             Path(e.path) for e in os.scandir(_pair)
                             if e.is_file(follow_symlinks=False)
                             and e.name.lower().endswith(".hcs")
-                        ])
+                        ]
+                        print(f"[DEBUG] pair={_pair.name} hcs={[f.name for f in found]}", file=sys.stderr)
+                        hcs_files.extend(found)
                     except OSError:
                         continue
 
@@ -2620,7 +2629,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")
