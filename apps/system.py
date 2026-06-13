@@ -684,7 +684,7 @@ def scan_terminal_files(t: dict) -> list[tuple]:
                 rel = e.name
             rows.append(("Log", rel, sz, mtime))
 
-    # History (.hcs): scan Bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
+    # History (.hcs/.hcc): scan Bases/[akun]/history/[pair]/ dan Tester/bases/[akun]/history/[pair]/
     _history_roots = []
     _bases = terminal_path / "bases"
     if _bases.exists():
@@ -711,7 +711,7 @@ def scan_terminal_files(t: dict) -> list[tuple]:
                     entries = sorted(
                         (e for e in os.scandir(_pair)
                          if e.is_file(follow_symlinks=False)
-                         and e.name.lower().endswith(".hcs")),
+                         and e.name.lower().endswith((".hcs", ".hcc"))),
                         key=lambda e: e.name,
                     )
                 except OSError:
