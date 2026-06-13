@@ -738,6 +738,11 @@ def scan_terminal_files(t: dict) -> list[tuple]:
     # MT4: history (skip 'default') + tester/history (.fxt) + tester/logs (.log)
     rows.extend(_scan_mt4_history_tester(t))
 
+    # Urutkan berdasarkan kategori agar baris Log/History tidak campur acak,
+    # lalu berdasarkan nama file di dalam kategori yang sama.
+    _CATEGORY_ORDER = {"Expert": 0, "Indicator": 1, "Script": 2, "Log": 3, "History": 4}
+    rows.sort(key=lambda r: (_CATEGORY_ORDER.get(r[0], 99), r[1]))
+
     return rows
 
 
