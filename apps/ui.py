@@ -606,7 +606,7 @@ class MTManager:
                                  fill=ACCENT3, font=(self._font, 10, "bold"))
 
         def _run_update(_=None):
-            update_sh = Path.home() / "vfx2" / "update.sh"
+            update_sh = Path.home() / "vfx" / "update.sh"
             if not update_sh.exists():
                 themed_popup(self.root, "error", "Update Failed",
                     f"Script not found:\n{update_sh}")
@@ -1460,7 +1460,7 @@ class MTManager:
         tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
         body = tk.Frame(dlg, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
         info_box = tk.Frame(body, bg=BG3, padx=14, pady=10); info_box.pack(fill="x", pady=(0,14))
-        for label, val in [("Terminal",  f"{t['type']} \u2014 {t['name']}"),
+        for label, val in [("Terminal",  f"{t['type']} — {t['name']}"),
                            ("Log files", f"{len(log_files)} file"),
                            ("History",   f"{len(hcs_files)} file (.hcs)"),
                            ("Total size", total_str)]:
@@ -2620,7 +2620,7 @@ class MTManager:
                          on_fail=lambda m: win.after(0, lambda: _on_fail(m)))
 
     def _auto_update_check(self):
-        update_sh = Path.home() / "vfx2" / "update.sh"
+        update_sh = Path.home() / "vfx" / "update.sh"
         if not update_sh.exists():
             return
         self._status("Checking for updates automatically\u2026")
