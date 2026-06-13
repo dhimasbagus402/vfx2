@@ -482,7 +482,7 @@ class MTManager:
             popup.focus_set()
 
         self.wget_entry.bind("<Button-3>", _show_context_menu)
-        Tooltip(self.wget_entry, 'Masukkan URL atau perintah wget dari dropfile.id',
+        Tooltip(self.wget_entry, 'Enter URL or wget command from dropfile.id',
                 delay=200, position="above")
 
         def _wget_paste():
@@ -535,7 +535,7 @@ class MTManager:
             activebackground=BG2, activeforeground=FG, font=(f, 9),
             relief="flat", borderwidth=0, highlightthickness=0, cursor="hand2")
         cb.pack(side="left")
-        Tooltip(cb, "Ekstrak otomatis jika file berupa ZIP/RAR/7Z", position="above")
+        Tooltip(cb, "Auto extract if file is ZIP/RAR/7Z", position="above")
 
         # ── STATUS BAR ──
         tk.Frame(self.root, bg=BG, height=10).pack(fill="x", side="bottom")
@@ -562,9 +562,9 @@ class MTManager:
         self._disk_free_bytes  = 0
         self._disk_total_bytes = 0
         # Bind tooltip ke disk_fr + semua child-nya agar area hover lebih luas
-        self._disk_tooltips = [Tooltip(disk_fr, "Disk: belum diukur", delay=150)]
+        self._disk_tooltips = [Tooltip(disk_fr, "Disk: not measured", delay=150)]
         for _w in disk_fr.winfo_children():
-            self._disk_tooltips.append(Tooltip(_w, "Disk: belum diukur", delay=150))
+            self._disk_tooltips.append(Tooltip(_w, "Disk: not measured", delay=150))
         # Refresh data disk setiap kali hover agar tooltip selalu up-to-date
         def _on_disk_hover(e=None):
             t = self._terminal(silent=True)
@@ -586,7 +586,7 @@ class MTManager:
             activebackground=BG2, activeforeground=FG, font=(self._font, 8),
             relief="flat", borderwidth=0, highlightthickness=0, cursor="hand2")
         au_cb.pack(side="left", fill="y")
-        Tooltip(au_cb, "Cek update otomatis saat aplikasi dijalankan", position="above")
+        Tooltip(au_cb, "Check for updates automatically on app start", position="above")
 
         update_c = tk.Canvas(sb_inner, bg=BG2, highlightthickness=0,
                               height=10, cursor="hand2")
@@ -663,7 +663,7 @@ class MTManager:
             self._disk_bar.set(0.0)
             if hasattr(self, "_disk_tooltips"):
                 for _t in self._disk_tooltips:
-                    _t.text = "Disk: tidak tersedia"
+                    _t.text = "Disk: unavailable"
             return
         free_frac = free / total
         used = total - free
@@ -1116,7 +1116,7 @@ class MTManager:
         # Status
         parts = []
         if done:    parts.append(f"{done} file(s) {'moved' if mode == 'cut' else 'copied'}")
-        if skipped: parts.append(f"{len(skipped)} dilewati (folder sama)")
+        if skipped: parts.append(f"{len(skipped)} skipped (same folder)")
         if errors:  parts.append(f"{len(errors)} failed")
         self._status(" · ".join(parts) + f" \u2192 {t['name']}")
 
@@ -1392,31 +1392,28 @@ class MTManager:
                 pass
             return None
 
-        _SKIP_ACCT = {"custom", "default"}
         _history_roots = []
         for _bname in ("bases", "Bases"):
             _p = terminal_path / _bname
             if _p.is_dir():
-                _history_roots.append((_p, True))
+                _history_roots.append(_p)
                 break
         for _tname in ("Tester", "tester"):
             _tp = terminal_path / _tname
             if _tp.is_dir():
                 _tb = _ci_dir(_tp, "bases")
                 if _tb:
-                    _history_roots.append((_tb, False))
+                    _history_roots.append(_tb)
                 break
 
         hcs_files = []
-        for _base_root, _apply_skip in _history_roots:
+        for _base_root in _history_roots:
             try:
                 _accounts = sorted(_base_root.iterdir(), key=lambda e: e.name)
             except OSError:
                 continue
             for _account in _accounts:
                 if not _account.is_dir():
-                    continue
-                if _apply_skip and _account.name.lower() in _SKIP_ACCT:
                     continue
                 _hist_dir = _ci_dir(_account, "history")
                 if not _hist_dir:
@@ -1430,7 +1427,7 @@ class MTManager:
                         hcs_files.extend([
                             Path(e.path) for e in os.scandir(_pair)
                             if e.is_file(follow_symlinks=False)
-                            and e.name.lower().endswith(".hcs")
+                            and e.name.lower().endswith((".hcs", ".hcc"))
                         ])
                     except OSError:
                         continue
@@ -1446,8 +1443,8 @@ class MTManager:
             all_files += extra_logs + extra_history
 
         if not all_files:
-            _info_popup("Tidak Ada File",
-                "Tidak ditemukan file log maupun history (.hcs) pada terminal ini.",
+            _info_popup("No Files Found",
+                "No log or history (.hcs/.hcc) files were found on this terminal.",
                 icon="\u26a0", icon_fg=WARN)
             return
 
@@ -1466,7 +1463,7 @@ class MTManager:
         info_box = tk.Frame(body, bg=BG3, padx=14, pady=10); info_box.pack(fill="x", pady=(0,14))
         for label, val in [("Terminal",  f"{t['type']} — {t['name']}"),
                            ("Log files", f"{len(log_files)} file"),
-                           ("History",   f"{len(hcs_files)} file (.hcs)"),
+                           ("History",   f"{len(hcs_files)} file (.hcs/.hcc)"),
                            ("Total size", total_str)]:
             row = tk.Frame(info_box, bg=BG3); row.pack(fill="x", pady=1)
             tk.Label(row, text=f"{label:<12}", bg=BG3, fg=FG3, font=(f, 9),
@@ -1482,7 +1479,7 @@ class MTManager:
             tk.Label(info_box, text=f"  \u2026 and {len(all_files)-8} more file(s)",
                      bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
         tk.Label(body,
-                 text="Semua file log dan history (.hcs) akan dihapus permanen.\nTindakan ini tidak dapat dibatalkan.",
+                 text="All log and history (.hcs/.hcc) files will be permanently deleted.\nThis action cannot be undone.",
                  bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w").pack(anchor="w", pady=(0,4))
         tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
         foot = tk.Frame(dlg, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
@@ -2872,7 +2869,7 @@ class MTManager:
         # Bersihkan clipboard agar tidak ada referensi path lama
         self._clipboard      = []
         self._clipboard_mode = ""
-        self._status("Memindai terminal…")
+        self._status("Scanning terminals…")
 
         def _on_result(found):
             self.root.after(0, lambda: self._apply_scan(found, silent))
