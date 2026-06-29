@@ -1886,7 +1886,25 @@ class MTManager:
         f  = self._font
         fm = self._font_mono
 
+        # Cegah jendela install ganda: kalau sudah terbuka, angkat ke depan saja
+        existing = getattr(self, "_install_win", None)
+        if existing is not None and existing.winfo_exists():
+            existing.deiconify()
+            existing.lift()
+            existing.focus_force()
+            existing.attributes("-topmost", True)
+            existing.after(200, lambda: existing.attributes("-topmost", False))
+            return
+
         win = tk.Toplevel(self.root)
+        self._install_win = win
+
+        def _close_install():
+            self._install_win = None
+            try: win.destroy()
+            except Exception: pass
+
+        win.protocol("WM_DELETE_WINDOW", _close_install)
         win.title("Install MetaTrader")
         win.configure(bg=BG)
         win.resizable(True, True)
@@ -2304,7 +2322,7 @@ class MTManager:
         foot.pack_propagate(False)
         fi = tk.Frame(foot, bg=BG2, padx=14)
         fi.pack(fill="both", expand=True)
-        cancel_h, _ = make_pill_btn(fi, "Close", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+        cancel_h, _ = make_pill_btn(fi, "Close", _close_install, bg=BG3, fg=FG, hover_bg=BG4,
                                     font_size=9, padx=20, pady=6, radius=7)
         cancel_h.pack(side="right", pady=7)
 
@@ -2334,6 +2352,8 @@ class MTManager:
 
         def _go_duplicate():
             dlg.destroy()
+            if getattr(self, "_install_win", None) is parent:
+                self._install_win = None
             try: parent.destroy()
             except Exception: pass
             self.duplicate_mt()
