@@ -62,6 +62,7 @@ class MTManager:
         self.root.after(2000, self._autostart_sync_poll)
         if self.auto_update_var.get():
             self.root.after(800, self._auto_update_check)
+        self.root.after(1200, self._whats_new_check)
 
     # ── Styles ────────────────────────────────────────────────────────────────
     def _build_styles(self):
@@ -133,8 +134,14 @@ class MTManager:
                  font=(f, 11, "bold")).pack(side="left")
         tk.Label(title_frame, text=" Manager \u2014 digiOS Edition",
                  bg=BG2, fg=FG2, font=(f, 11)).pack(side="left")
-        tk.Label(title_frame, text=f"  v{__version__}",
-                 bg=BG2, fg=FG3, font=(f, 9)).pack(side="left", pady=(2, 0))
+        ver_lbl = tk.Label(title_frame, text=f"  v{__version__}",
+                 bg=BG2, fg=FG3, font=(f, 9))
+        ver_lbl.pack(side="left", pady=(2, 0))
+        ver_lbl.config(cursor="hand2")
+        Tooltip(ver_lbl, "Lihat changelog")
+        ver_lbl.bind("<Button-1>", lambda e: self._show_whats_new(be.CHANGELOG, manual=True), add="+")
+        ver_lbl.bind("<Enter>", lambda e: ver_lbl.config(fg=ACCENT), add="+")
+        ver_lbl.bind("<Leave>", lambda e: ver_lbl.config(fg=FG3), add="+")
 
         # ── BODY ──────────────────────────────────────────────────────────────
         body = tk.Frame(self.root, bg=BG)
@@ -1886,25 +1893,7 @@ class MTManager:
         f  = self._font
         fm = self._font_mono
 
-        # Cegah jendela install ganda: kalau sudah terbuka, angkat ke depan saja
-        existing = getattr(self, "_install_win", None)
-        if existing is not None and existing.winfo_exists():
-            existing.deiconify()
-            existing.lift()
-            existing.focus_force()
-            existing.attributes("-topmost", True)
-            existing.after(200, lambda: existing.attributes("-topmost", False))
-            return
-
         win = tk.Toplevel(self.root)
-        self._install_win = win
-
-        def _close_install():
-            self._install_win = None
-            try: win.destroy()
-            except Exception: pass
-
-        win.protocol("WM_DELETE_WINDOW", _close_install)
         win.title("Install MetaTrader")
         win.configure(bg=BG)
         win.resizable(True, True)
@@ -2322,7 +2311,7 @@ class MTManager:
         foot.pack_propagate(False)
         fi = tk.Frame(foot, bg=BG2, padx=14)
         fi.pack(fill="both", expand=True)
-        cancel_h, _ = make_pill_btn(fi, "Close", _close_install, bg=BG3, fg=FG, hover_bg=BG4,
+        cancel_h, _ = make_pill_btn(fi, "Close", win.destroy, bg=BG3, fg=FG, hover_bg=BG4,
                                     font_size=9, padx=20, pady=6, radius=7)
         cancel_h.pack(side="right", pady=7)
 
@@ -2352,8 +2341,6 @@ class MTManager:
 
         def _go_duplicate():
             dlg.destroy()
-            if getattr(self, "_install_win", None) is parent:
-                self._install_win = None
             try: parent.destroy()
             except Exception: pass
             self.duplicate_mt()
@@ -2680,6 +2667,130 @@ class MTManager:
                                  font_size=9, padx=20, pady=6, radius=7)
         ok_h.pack(side="right", pady=8)
         self._status("A new update is available \u2014 restart to apply.")
+
+    # ── What's New ──────────────────────────────────────────────────────────────
+    def _whats_new_check(self):
+        """Cek saat startup: jika versi kode lebih baru dari yang terakhir dilihat,
+        tampilkan popup 'What's New'. First-launch dicatat diam-diam (tanpa popup)."""
+        try:
+            seen = be.get_seen_version()
+        except Exception:
+            seen = None
+
+        # First launch (belum ada catatan): rekam versi sekarang tanpa popup.
+        if seen is None:
+            be.set_seen_version(__version__)
+            return
+
+        if be._parse_version(__version__) <= be._parse_version(seen):
+            return  # tidak ada yang baru
+
+        entries = be.changelog_since(seen)
+        # Selalu tandai sudah dilihat, meski changelog kebetulan kosong.
+        be.set_seen_version(__version__)
+        if entries:
+            self._show_whats_new(entries, manual=False)
+
+    def _show_whats_new(self, entries, manual=False):
+        """Popup changelog bertema. entries: list dict {version, date, title, changes}.
+        manual=True saat dibuka via klik label versi (judul sedikit beda)."""
+        if not entries:
+            if manual:
+                themed_popup(self.root, "info", "What's New",
+                             "Belum ada catatan rilis.")
+            return
+
+        f   = self._font
+        win = tk.Toplevel(self.root)
+        win.title("What's New")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        W, H = 480, 460
+
+        # ── Header ──
+        hdr = tk.Frame(win, bg=BG2, height=52); hdr.pack(fill="x"); hdr.pack_propagate(False)
+        hdr_i = tk.Frame(hdr, bg=BG2, padx=22); hdr_i.pack(fill="both", expand=True)
+        tk.Label(hdr_i, text="\u2728  What's New", bg=BG2, fg=ACCENT,
+                 font=(f, 13, "bold")).pack(side="left", fill="y")
+        sub = "Changelog lengkap" if manual else f"Diperbarui ke v{__version__}"
+        tk.Label(hdr_i, text=sub, bg=BG2, fg=FG3,
+                 font=(f, 9)).pack(side="left", padx=(10, 0), pady=(3, 0))
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+
+        # ── Body scrollable (Canvas + RoundScrollbar + inner frame) ──
+        body = tk.Frame(win, bg=BG); body.pack(fill="both", expand=True)
+        canvas = tk.Canvas(body, bg=BG, highlightthickness=0, bd=0)
+        sb = RoundScrollbar(body, command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg=BG)
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_inner_config(_=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        inner.bind("<Configure>", _on_inner_config)
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win_id, width=e.width))
+
+        def _wheel(e):
+            delta = -1 if (getattr(e, "num", None) == 5 or e.delta < 0) else 1
+            canvas.yview_scroll(-delta, "units")
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            canvas.bind_all(seq, _wheel)
+
+        def _unbind_wheel():
+            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                try: canvas.unbind_all(seq)
+                except Exception: pass
+
+        # ── Isi changelog ──
+        pad = tk.Frame(inner, bg=BG, padx=24, pady=18); pad.pack(fill="both", expand=True)
+        for idx, e in enumerate(entries):
+            if idx > 0:
+                tk.Frame(pad, bg=BORDER, height=1).pack(fill="x", pady=(16, 14))
+            ver_row = tk.Frame(pad, bg=BG); ver_row.pack(fill="x", anchor="w")
+            tk.Label(ver_row, text=f"v{e.get('version','?')}", bg=BG, fg=FG,
+                     font=(f, 12, "bold")).pack(side="left")
+            if e.get("title"):
+                tk.Label(ver_row, text=f"\u2014 {e['title']}", bg=BG, fg=FG2,
+                         font=(f, 10)).pack(side="left", padx=(8, 0))
+            if e.get("date"):
+                tk.Label(ver_row, text=e["date"], bg=BG, fg=FG3,
+                         font=(f, 9)).pack(side="right")
+
+            for tag, text in e.get("changes", []):
+                label, color = be.CHANGELOG_TAGS.get(
+                    tag, (tag.upper() if tag else "INFO", FG3))
+                row = tk.Frame(pad, bg=BG); row.pack(fill="x", anchor="w", pady=(8, 0))
+                badge = tk.Label(row, text=f" {label} ", bg=color, fg=BG,
+                                 font=(f, 7, "bold"))
+                badge.pack(side="left", anchor="n", pady=(2, 0))
+                tk.Label(row, text=text, bg=BG, fg=FG2, font=(f, 10),
+                         justify="left", anchor="w", wraplength=W - 150
+                         ).pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+        # ── Footer ──
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(win, bg=BG2, height=46); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+
+        def _close():
+            _unbind_wheel()
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", _close)
+        ok_h, _ = make_pill_btn(fi, "Got it", _close, bg=ACCENT_DIM, fg=ACCENT,
+                                hover_bg="#1d2b36", font_size=9, padx=22, pady=6, radius=7)
+        ok_h.pack(side="right", pady=9)
+
+        # ── Posisi tengah ──
+        win.update_idletasks()
+        rx = self.root.winfo_x() + self.root.winfo_width()  // 2 - W // 2
+        ry = self.root.winfo_y() + self.root.winfo_height() // 2 - H // 2
+        win.geometry(f"{W}x{H}+{rx}+{ry}")
+        win.deiconify(); win.lift(); win.focus_force()
 
     # ── Autostart canvas ──────────────────────────────────────────────────────
     # ── Autostart switch (info bar) ─────────────────────────────────────────────

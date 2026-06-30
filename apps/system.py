@@ -17,6 +17,52 @@ from urllib.request import urlopen, Request
 
 __version__ = "2.2"
 
+# ── Changelog ───────────────────────────────────────────────────────────────
+# Catatan rilis untuk popup "What's New".
+# Tambahkan entri BARU di paling atas setiap kali __version__ di-bump.
+# Setiap perubahan berupa tuple (tag, teks). Tag valid: "new", "improve", "fix".
+CHANGELOG = [
+    {
+        "version": "2.2",
+        "date": "2026-06-30",
+        "title": "Refactor & What's New",
+        "changes": [
+            ("new",     "Popup \u201cWhat's New\u201d kini muncul otomatis setelah update."),
+            ("new",     "Klik label versi di toolbar untuk membuka changelog lengkap."),
+            ("improve", "Kode dipecah jadi tiga modul (UI / backend / widgets) untuk performa."),
+            ("fix",     "Guard jendela ganda pada window Install MT."),
+        ],
+    },
+    {
+        "version": "2.1",
+        "date": "2026-06-01",
+        "title": "Stabilitas UI",
+        "changes": [
+            ("improve", "Sinkronisasi scroll pada tabel tiga-Treeview lebih mulus."),
+            ("fix",     "Artefak garis putih pada beberapa dialog dihilangkan."),
+        ],
+    },
+]
+
+
+def _parse_version(v) -> tuple:
+    """'2.10' -> (2, 10). Bagian non-numerik diabaikan, aman untuk perbandingan."""
+    parts = []
+    for chunk in str(v).split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts) or (0,)
+
+
+def changelog_since(last_version):
+    """Entri changelog yang lebih baru dari last_version.
+    last_version None -> kembalikan SEMUA entri (mode changelog penuh)."""
+    if last_version is None:
+        return list(CHANGELOG)
+    lv = _parse_version(last_version)
+    return [e for e in CHANGELOG if _parse_version(e.get("version", "0")) > lv]
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_PATH = Path.home() / ".config" / "mt_manager" / "settings.json"
 
@@ -38,6 +84,18 @@ def save_config(data: dict):
         pass
 
 
+def get_seen_version():
+    """Versi changelog terakhir yang sudah dilihat user (None jika belum pernah)."""
+    return load_config().get("seen_version")
+
+
+def set_seen_version(v: str):
+    """Catat versi yang sudah dilihat agar popup tidak muncul lagi."""
+    cfg = load_config()
+    cfg["seen_version"] = str(v)
+    save_config(cfg)
+
+
 # ── Design Tokens ─────────────────────────────────────────────────────────────
 BG          = "#0a0e11"
 BG2         = "#11181e"
@@ -56,6 +114,13 @@ WARN        = "#f0a030"
 FG          = "#e8edf5"
 FG2         = "#aeb9c9"
 FG3         = "#717c8f"
+
+# Map tag changelog -> (label badge, warna). Dipakai popup "What's New".
+CHANGELOG_TAGS = {
+    "new":     ("NEW",      ACCENT3),
+    "improve": ("IMPROVED", ACCENT),
+    "fix":     ("FIXED",    WARN),
+}
 WHITE       = "#ffffff"
 PURPLE      = "#a78bfa"
 
