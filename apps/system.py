@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from urllib.request import urlopen, Request
 
-__version__ = "2.2"
+__version__ = "2.3"
 
 # ── Changelog ───────────────────────────────────────────────────────────────
 # Catatan rilis untuk popup "What's New".
@@ -23,13 +23,11 @@ __version__ = "2.2"
 # Setiap perubahan berupa tuple (tag, teks). Tag valid: "new", "improve", "fix".
 CHANGELOG = [
     {
-        "version": "2.2",
+        "version": "2.3",
         "date": "2026-06-30",
         "title": "Refactor & What's New",
         "changes": [
-            ("new",     "Popup \u201cWhat's New\u201d kini muncul otomatis setelah update."),
-            ("new",     "Klik label versi di toolbar untuk membuka changelog lengkap."),
-            ("improve", "Kode dipecah jadi tiga modul (UI / backend / widgets) untuk performa."),
+            ("new",     "Menampilkan detail penggunaan disk."),
             ("fix",     "Guard jendela ganda pada window Install MT."),
         ],
     },
