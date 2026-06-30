@@ -2643,6 +2643,13 @@ class MTManager:
         # Update baru terpasang & menunggu restart -> tunda What's New
         # sampai launch berikutnya supaya tidak muncul bersamaan.
         self._update_pending = True
+        # Jika popup What's New terlanjur terbuka (mis. karena timer lebih dulu
+        # jalan), tutup sekarang juga agar tidak tampil berdampingan.
+        wn = getattr(self, "_whatsnew_win", None)
+        if wn is not None:
+            try: wn.destroy()
+            except Exception: pass
+            self._whatsnew_win = None
         f   = self._font
         win = tk.Toplevel(self.root); win.title("Update Available")
         win.configure(bg=BG); win.geometry("400x160"); win.resizable(False, False)
@@ -2698,8 +2705,13 @@ class MTManager:
         if be._parse_version(__version__) <= be._parse_version(seen):
             return  # tidak ada yang baru
 
-        entries = be.changelog_since(seen)
-        # Selalu tandai sudah dilihat, meski changelog kebetulan kosong.
+        # Hanya tampilkan perubahan SAMPAI versi yang benar-benar berjalan.
+        # Entri versi yang baru ditarik git pull (mis. lewat auto-update) tapi
+        # belum dijalankan tidak ikut ditampilkan -> akan muncul setelah restart.
+        rv = be._parse_version(__version__)
+        entries = [e for e in be.changelog_since(seen)
+                   if be._parse_version(e.get("version", "0")) <= rv]
+        # Tandai sudah dilihat sampai versi yang berjalan (bukan versi yang ditarik).
         be.set_seen_version(__version__)
         if entries:
             self._show_whats_new(entries, manual=False)
@@ -2707,6 +2719,10 @@ class MTManager:
     def _show_whats_new(self, entries, manual=False):
         """Popup changelog bertema. entries: list dict {version, date, title, changes}.
         manual=True saat dibuka via klik label versi (judul sedikit beda)."""
+        # Jaring pengaman: jangan pernah tampilkan What's New otomatis saat ada
+        # update yang menunggu restart (popup Update Available sedang/akan tampil).
+        if not manual and getattr(self, "_update_pending", False):
+            return
         if not entries:
             if manual:
                 themed_popup(self.root, "info", "What's New",
@@ -2715,6 +2731,7 @@ class MTManager:
 
         f   = self._font
         win = tk.Toplevel(self.root)
+        self._whatsnew_win = win
         win.title("What's New")
         win.configure(bg=BG)
         win.resizable(False, False)
@@ -2793,6 +2810,14 @@ class MTManager:
             _unbind_wheel()
             win.destroy()
 
+        # Cleanup di SEMUA jalur tutup (tombol, WM close, atau destroy dari luar
+        # oleh popup Update Available): unbind wheel global & bersihkan referensi.
+        def _on_destroy(e):
+            if e.widget is win:
+                _unbind_wheel()
+                if getattr(self, "_whatsnew_win", None) is win:
+                    self._whatsnew_win = None
+        win.bind("<Destroy>", _on_destroy)
         win.protocol("WM_DELETE_WINDOW", _close)
         ok_h, _ = make_pill_btn(fi, "Got it", _close, bg=ACCENT_DIM, fg=ACCENT,
                                 hover_bg="#1d2b36", font_size=9, padx=22, pady=6, radius=7)
