@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import threading
+import socket
 import datetime
 import time
 from pathlib import Path
@@ -111,6 +112,97 @@ def set_seen_version(v: str):
     cfg = load_config()
     cfg["seen_version"] = str(v)
     save_config(cfg)
+
+
+# ── Single-instance guard ─────────────────────────────────────────────────────
+# Pakai abstract unix socket (khusus Linux): nama diawali "\0" sehingga tidak
+# membuat file di disk dan otomatis dilepas kernel saat proses mati -> tak ada
+# lock basi. Instance kedua mendeteksi instance pertama lalu mengirim sinyal
+# "raise" agar window yang sudah ada diangkat ke depan.
+_SINGLETON_ADDR = "\0mt_manager_singleton"
+
+
+class SingleInstance:
+    """Penjaga agar hanya satu instance aplikasi yang berjalan."""
+
+    def __init__(self, addr: str = _SINGLETON_ADDR):
+        self.addr = addr
+        self._sock = None
+        self._thread = None
+        self._on_activate = None
+
+    def try_acquire(self) -> bool:
+        """True  -> kita instance PERTAMA (alamat berhasil di-bind & listen).
+        False -> sudah ada instance lain (sudah dikirimi sinyal 'raise')."""
+        for _ in range(3):
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                s.bind(self.addr)
+                s.listen(8)
+                self._sock = s
+                return True
+            except OSError:
+                s.close()
+            # Alamat sudah dipakai -> coba beri tahu instance lama untuk muncul.
+            try:
+                c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                c.settimeout(1.0)
+                c.connect(self.addr)
+                c.sendall(b"raise")
+                c.close()
+                return False
+            except OSError:
+                # Instance lama lenyap di antara bind & connect -> ulangi bind.
+                time.sleep(0.1)
+                continue
+        return True  # fallback aman: tetap jalankan sebagai instance pertama
+
+    def start_listener(self, on_activate):
+        """Thread daemon yang menunggu sinyal dari instance baru lalu memanggil
+        on_activate() (mis. untuk mengangkat window)."""
+        if self._sock is None:
+            return
+        self._on_activate = on_activate
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self):
+        sock = self._sock
+        if sock is None:
+            return
+        while True:
+            try:
+                conn, _ = sock.accept()
+            except OSError:
+                break  # socket ditutup (release / proses berakhir)
+            try:
+                conn.recv(64)
+            except OSError:
+                pass
+            finally:
+                try: conn.close()
+                except OSError: pass
+            if self._on_activate:
+                try: self._on_activate()
+                except Exception: pass
+
+    def release(self):
+        s = self._sock
+        self._sock = None
+        if s is None:
+            return
+        # Bangunkan accept() yang sedang ter-blokir agar thread keluar bersih.
+        try:
+            w = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            w.settimeout(0.3)
+            w.connect(self.addr)
+            w.close()
+        except OSError:
+            pass
+        try:
+            s.close()
+        except OSError:
+            pass
 
 
 # ── Design Tokens ─────────────────────────────────────────────────────────────

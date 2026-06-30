@@ -4,7 +4,8 @@
     "date": "2026-06-30",
     "title": "Refactor & What's New",
     "changes": [
-      ["new", "Popup \u201cWhat's New\u201d"]
+      ["new", "Popup \u201cWhat's New\u201d"],
+	  ["fix", "Guard jendela ganda pada MT Manager."],
     ]
   },
   {

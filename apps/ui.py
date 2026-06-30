@@ -35,6 +35,20 @@ from system import (
 class MTManager:
     def __init__(self, root):
         self.root = root
+
+        # ── Single-instance guard ─────────────────────────────────────────────
+        # Cegah aplikasi dibuka berkali-kali. Jika sudah ada instance berjalan,
+        # angkat window-nya lalu keluar dari proses ini tanpa membangun UI.
+        self._singleton = be.SingleInstance()
+        if not self._singleton.try_acquire():
+            try:
+                root.withdraw()
+                root.destroy()
+            except Exception:
+                pass
+            raise SystemExit(0)
+        self._singleton.start_listener(self._raise_self)
+
         self.root.title("MetaTrader Manager")
         self.root.geometry("1180x700")
         self.root.configure(bg=BG)
@@ -3126,6 +3140,23 @@ class MTManager:
         dlg.update_idletasks(); self._center_win(dlg); dlg.deiconify(); dlg.lift(); dlg.focus_force()
 
     # ── Utility ───────────────────────────────────────────────────────────────
+    def _raise_self(self):
+        """Dipanggil dari thread listener saat ada percobaan membuka instance
+        kedua: angkat & fokuskan window yang sudah ada (thread-safe via after)."""
+        def _do():
+            try:
+                self.root.deiconify()
+                self.root.attributes("-topmost", True)
+                self.root.lift()
+                self.root.focus_force()
+                self.root.after(300, lambda: self.root.attributes("-topmost", False))
+            except Exception:
+                pass
+        try:
+            self.root.after(0, _do)
+        except Exception:
+            pass
+
     def _center_win(self, win):
         """Pusatkan window relatif terhadap root."""
         win.update_idletasks()
