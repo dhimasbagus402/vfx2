@@ -60,9 +60,13 @@ class MTManager:
         self.scan_terminals(silent=True)
         self.root.after(400, self._disk_poll)
         self.root.after(2000, self._autostart_sync_poll)
+        self._update_pending = False
         if self.auto_update_var.get():
             self.root.after(800, self._auto_update_check)
-        self.root.after(1200, self._whats_new_check)
+        else:
+            # Tanpa auto-update tak ada popup update yang bisa bentrok,
+            # jadi What's New aman dijadwalkan langsung.
+            self.root.after(1200, self._whats_new_check)
 
     # ── Styles ────────────────────────────────────────────────────────────────
     def _build_styles(self):
@@ -2616,6 +2620,7 @@ class MTManager:
                 msg_var.set("App is up-to-date."); sub_var.set("No new changes.")
                 ok_h.pack(side="right", pady=8)
             else:
+                self._update_pending = True
                 icon_lbl.config(text="\u2713", fg=ACCENT3)
                 msg_var.set("Update successful!")
                 sub_var.set("Restart the app to apply changes.")
@@ -2635,6 +2640,9 @@ class MTManager:
     def _show_auto_update_result(self, has_update: bool):
         if not has_update:
             return
+        # Update baru terpasang & menunggu restart -> tunda What's New
+        # sampai launch berikutnya supaya tidak muncul bersamaan.
+        self._update_pending = True
         f   = self._font
         win = tk.Toplevel(self.root); win.title("Update Available")
         win.configure(bg=BG); win.geometry("400x160"); win.resizable(False, False)
@@ -2671,7 +2679,12 @@ class MTManager:
     # ── What's New ──────────────────────────────────────────────────────────────
     def _whats_new_check(self):
         """Cek saat startup: jika versi kode lebih baru dari yang terakhir dilihat,
-        tampilkan popup 'What's New'. First-launch dicatat diam-diam (tanpa popup)."""
+        tampilkan popup 'What's New'. First-launch dicatat diam-diam (tanpa popup).
+        Ditunda bila ada update yang baru dipasang & menunggu restart."""
+        # Ada update menunggu restart -> jangan tampilkan sekarang.
+        # seen_version sengaja TIDAK diubah, agar popup muncul setelah restart.
+        if getattr(self, "_update_pending", False):
+            return
         try:
             seen = be.get_seen_version()
         except Exception:
