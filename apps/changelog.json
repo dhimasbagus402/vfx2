@@ -1,0 +1,29 @@
+[
+  {
+    "version": "2.3",
+    "date": "2026-06-30",
+    "title": "Refactor & What's New",
+    "changes": [
+      ["new", "Popup \u201cWhat's New\u201d"]
+    ]
+  },
+  {
+    "version": "2.2",
+    "date": "2026-06-13",
+    "title": "Fix Bug",
+    "changes": [
+	  ["new", "Menampilkan detail penggunaan Disk."],
+      ["fix", "Guard jendela ganda pada window Install MT."],
+	  ["fix", "Scan file Log."]
+    ]
+  },
+  {
+    "version": "2.1",
+    "date": "2026-06-01",
+    "title": "Stabilitas UI",
+    "changes": [
+      ["improve", "Sinkronisasi scroll pada tabel tiga-Treeview lebih mulus."],
+      ["fix", "Artefak garis putih pada beberapa dialog dihilangkan."]
+    ]
+  }
+]

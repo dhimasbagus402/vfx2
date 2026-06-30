@@ -139,7 +139,7 @@ class MTManager:
         ver_lbl.pack(side="left", pady=(2, 0))
         ver_lbl.config(cursor="hand2")
         Tooltip(ver_lbl, "Lihat changelog")
-        ver_lbl.bind("<Button-1>", lambda e: self._show_whats_new(be.CHANGELOG, manual=True), add="+")
+        ver_lbl.bind("<Button-1>", lambda e: self._show_whats_new(be.load_changelog(), manual=True), add="+")
         ver_lbl.bind("<Enter>", lambda e: ver_lbl.config(fg=ACCENT), add="+")
         ver_lbl.bind("<Leave>", lambda e: ver_lbl.config(fg=FG3), add="+")
 

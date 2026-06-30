@@ -18,30 +18,20 @@ from urllib.request import urlopen, Request
 __version__ = "2.2"
 
 # ── Changelog ───────────────────────────────────────────────────────────────
-# Catatan rilis untuk popup "What's New".
-# Tambahkan entri BARU di paling atas setiap kali __version__ di-bump.
-# Setiap perubahan berupa tuple (tag, teks). Tag valid: "new", "improve", "fix".
-CHANGELOG = [
-    {
-        "version": "2.2",
-        "date": "2026-06-30",
-        "title": "Refactor & What's New",
-        "changes": [
-            ("new",     "Menampilkan detail penggunaan Disk."),
-            #("improve", "Kode dipecah jadi tiga modul (UI / backend / widgets) untuk performa."),
-            ("fix",     "Guard jendela ganda pada window Install MT."),
-        ],
-    },
-    {
-        "version": "2.1",
-        "date": "2026-06-01",
-        "title": "Stabilitas UI",
-        "changes": [
-            ("improve", "Sinkronisasi scroll pada tabel tiga-Treeview lebih mulus."),
-            ("fix",     "Artefak garis putih pada beberapa dialog dihilangkan."),
-        ],
-    },
-]
+# Data catatan rilis dipisah ke file changelog.json (di folder yang sama dengan
+# modul ini, sehingga ikut ter-update lewat git pull). Edit file itu untuk
+# menambah entri rilis — TIDAK perlu menyentuh kode di sini.
+CHANGELOG_PATH = Path(__file__).resolve().parent / "changelog.json"
+
+
+def load_changelog() -> list:
+    """Baca changelog.json. Kembalikan list entri, atau [] jika file
+    tidak ada / rusak (popup cukup tidak muncul, app tidak crash)."""
+    try:
+        data = json.loads(CHANGELOG_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
 
 
 def _parse_version(v) -> tuple:
@@ -56,10 +46,11 @@ def _parse_version(v) -> tuple:
 def changelog_since(last_version):
     """Entri changelog yang lebih baru dari last_version.
     last_version None -> kembalikan SEMUA entri (mode changelog penuh)."""
+    entries = load_changelog()
     if last_version is None:
-        return list(CHANGELOG)
+        return entries
     lv = _parse_version(last_version)
-    return [e for e in CHANGELOG if _parse_version(e.get("version", "0")) > lv]
+    return [e for e in entries if _parse_version(e.get("version", "0")) > lv]
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
