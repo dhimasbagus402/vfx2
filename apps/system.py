@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from urllib.request import urlopen, Request
 
-__version__ = "2.3"
+__version__ = "2.2"
 
 # ── Changelog ───────────────────────────────────────────────────────────────
 # Data catatan rilis dipisah ke file changelog.json (di folder yang sama dengan
@@ -67,9 +67,36 @@ def load_config() -> dict:
 
 
 def save_config(data: dict):
+    """Simpan settings.json secara ATOMIK: tulis ke file .tmp lalu rename.
+    Mencegah settings.json rusak/separuh jika proses mati saat menyimpan."""
     try:
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CONFIG_PATH.write_text(json.dumps(data, indent=2))
+        tmp = CONFIG_PATH.parent / (CONFIG_PATH.name + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        os.replace(tmp, CONFIG_PATH)  # atomik pada filesystem yang sama
+    except Exception:
+        pass
+
+
+def cleanup_config_temp():
+    """Bersihkan file temp orphan di folder config:
+    - '.goutputstream-*' : sisa atomic-save editor GTK (gedit/xed/file manager)
+    - '*.tmp'            : sisa penyimpanan atomik app jika sempat terputus
+    Hanya yang sudah 'diam' >5 detik agar tak mengganggu penulisan yang berjalan."""
+    try:
+        d = CONFIG_PATH.parent
+        if not d.exists():
+            return
+        now = time.time()
+        for p in d.iterdir():
+            if not p.is_file():
+                continue
+            if p.name.startswith(".goutputstream-") or p.name.endswith(".tmp"):
+                try:
+                    if now - p.stat().st_mtime > 5:
+                        p.unlink()
+                except Exception:
+                    pass
     except Exception:
         pass
 

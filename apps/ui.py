@@ -67,6 +67,8 @@ class MTManager:
             # Tanpa auto-update tak ada popup update yang bisa bentrok,
             # jadi What's New aman dijadwalkan langsung.
             self.root.after(1200, self._whats_new_check)
+        # Sapu file temp orphan (.goutputstream-*, *.tmp) di folder config.
+        self.root.after(2500, be.cleanup_config_temp)
 
     # ── Styles ────────────────────────────────────────────────────────────────
     def _build_styles(self):
