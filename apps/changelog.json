@@ -5,7 +5,7 @@
     "title": "Refactor & What's New",
     "changes": [
       ["new", "Popup \u201cWhat's New\u201d"],
-	  ["fix", "Guard jendela ganda pada MT Manager."],
+	  ["fix", "Guard jendela ganda pada MT Manager."]
     ]
   },
   {
