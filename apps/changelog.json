@@ -5,7 +5,9 @@
     "title": "Tick & Cache Scan",
     "changes": [
       ["new", "Scan tick data files (.tkc) under Bases and Tester/bases [account]/ticks/[pair]/."],
-      ["new", "Scan tester cache files (.tst) under Tester/cache/."]
+      ["new", "Scan tester cache files (.tst) under Tester/cache/."],
+      ["new", "Utility: Clear Ticks removes all scanned .tkc files."],
+      ["new", "Utility: Clear Cache removes all scanned .tst files."]
     ]
   },
   {

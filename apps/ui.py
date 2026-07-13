@@ -265,7 +265,7 @@ class MTManager:
         ]
         _tooltips = {
             "\u2699 Manage EA / Indicator": "Install or remove EA / Indicator on MT",
-            "\u2692 Utility": "Clear Logs and open MetaEditor",
+            "\u2692 Utility": "Clear Logs / Ticks / Cache and open MetaEditor",
             "\u25a6 Browse": "Open MT data folder",
             "\u25b6 Open MT": "Run the selected MT terminal",
         }
@@ -1561,6 +1561,146 @@ class MTManager:
         cancel_h.pack(side="right", pady=8)
         dlg.update_idletasks(); self._center_win(dlg); dlg.deiconify(); dlg.lift(); dlg.focus_force()
 
+    # ── Clear Ticks / Cache ───────────────────────────────────────────────────
+    def clear_ticks(self):
+        """Hapus semua file tick (.tkc) yang terscan."""
+        self._clear_scanned_category("Ticks", "Clear Ticks", "Tick", "(.tkc)")
+
+    def clear_cache(self):
+        """Hapus semua file cache tester (.tst) yang terscan."""
+        self._clear_scanned_category("Cache", "Clear Cache", "Cache", "(.tst)")
+
+    def _clear_scanned_category(self, category, dlg_title, noun, ext_desc):
+        """Generic: hapus semua file dari satu kategori hasil scan_terminal_files.
+
+        category  : label kategori seperti di scan ('Ticks' / 'Cache').
+        dlg_title : judul dialog, mis. 'Clear Ticks'.
+        noun      : kata benda pendek untuk pesan, mis. 'Tick' / 'Cache'.
+        ext_desc  : deskripsi ekstensi, mis. '(.tkc)'.
+        """
+        t = self._terminal()
+        if not t:
+            return
+        f  = self._font
+        fm = self._font_mono
+        terminal_path = Path(t["path"])
+
+        # Kumpulkan file langsung dari hasil scan agar yang dihapus persis
+        # sama dengan yang ditampilkan di tabel.
+        files = []
+        for label, rel, _sz, _mt in be.scan_terminal_files(t):
+            if label == category:
+                p = terminal_path / rel
+                if p.exists():
+                    files.append(p)
+
+        def _info_popup(title, msg, icon="\u2139", icon_fg=ACCENT):
+            w = tk.Toplevel(self.root); w.title(title); w.configure(bg=BG)
+            w.resizable(False, False); w.attributes("-topmost", True)
+            hdr = tk.Frame(w, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
+            hdr_i = tk.Frame(hdr, bg=BG2, padx=20); hdr_i.pack(fill="both", expand=True)
+            tk.Label(hdr_i, text=f"{icon}  {title}",
+                     bg=BG2, fg=icon_fg, font=(f, 12, "bold")).pack(side="left", fill="y")
+            tk.Frame(w, bg=BORDER, height=1).pack(fill="x")
+            body = tk.Frame(w, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
+            tk.Label(body, text=msg, bg=BG, fg=FG2, font=(f, 10),
+                     justify="left", anchor="w", wraplength=380).pack(anchor="w")
+            tk.Frame(w, bg=BORDER, height=1).pack(fill="x")
+            foot = tk.Frame(w, bg=BG2, height=44); foot.pack(fill="x"); foot.pack_propagate(False)
+            fi = tk.Frame(foot, bg=BG2, padx=12); fi.pack(fill="both", expand=True)
+            oh, _ = make_pill_btn(fi, "OK", w.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                  font_size=9, padx=20, pady=6, radius=7)
+            oh.pack(side="right", pady=8)
+            w.update_idletasks(); self._center_win(w); w.deiconify(); w.lift(); w.focus_force()
+
+        if not files:
+            _info_popup("No Files Found",
+                f"No {noun.lower()} {ext_desc} files were found on this terminal.",
+                icon="\u26a0", icon_fg=WARN)
+            return
+
+        total_kb  = sum(lf.stat().st_size for lf in files if lf.exists()) / 1024
+        total_str = f"{total_kb:.1f} KB" if total_kb < 1024 else f"{total_kb/1024:.2f} MB"
+
+        # ── Dialog konfirmasi ─────────────────────────────────────────────────
+        dlg = tk.Toplevel(self.root); dlg.title(dlg_title); dlg.configure(bg=BG)
+        dlg.resizable(False, False); dlg.attributes("-topmost", True)
+        hdr = tk.Frame(dlg, bg=BG2, height=48); hdr.pack(fill="x"); hdr.pack_propagate(False)
+        hdr_inner = tk.Frame(hdr, bg=BG2, padx=20); hdr_inner.pack(fill="both", expand=True)
+        tk.Label(hdr_inner, text=f"\u2015  {dlg_title}",
+                 bg=BG2, fg=WARN, font=(f, 12, "bold")).pack(side="left", fill="y")
+        tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+        body = tk.Frame(dlg, bg=BG, padx=24, pady=18); body.pack(fill="both", expand=True)
+        info_box = tk.Frame(body, bg=BG3, padx=14, pady=10); info_box.pack(fill="x", pady=(0,14))
+        for label, val in [("Terminal",   f"{t['type']} — {t['name']}"),
+                           (f"{noun} files", f"{len(files)} file {ext_desc}"),
+                           ("Total size",  total_str)]:
+            row = tk.Frame(info_box, bg=BG3); row.pack(fill="x", pady=1)
+            tk.Label(row, text=f"{label:<12}", bg=BG3, fg=FG3, font=(f, 9),
+                     anchor="w", width=12).pack(side="left")
+            tk.Label(row, text=val, bg=BG3, fg=FG2, font=(fm, 9), anchor="w").pack(side="left")
+        tk.Frame(info_box, bg=BORDER, height=1).pack(fill="x", pady=(8,6))
+        for lf in files[:8]:
+            try:    _display = str(lf.relative_to(terminal_path))
+            except: _display = lf.name
+            tk.Label(info_box, text=f"  {_display}", bg=BG3, fg=FG3,
+                     font=(fm, 8), anchor="w").pack(anchor="w")
+        if len(files) > 8:
+            tk.Label(info_box, text=f"  \u2026 and {len(files)-8} more file(s)",
+                     bg=BG3, fg=FG3, font=(f, 8), anchor="w").pack(anchor="w")
+        tk.Label(body,
+                 text=f"All {noun.lower()} {ext_desc} files will be permanently deleted.\nThis action cannot be undone.",
+                 bg=BG, fg=FG2, font=(f, 9), justify="left", anchor="w").pack(anchor="w", pady=(0,4))
+        tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
+        foot = tk.Frame(dlg, bg=BG2, height=50); foot.pack(fill="x"); foot.pack_propagate(False)
+        fi = tk.Frame(foot, bg=BG2, padx=14); fi.pack(fill="both", expand=True)
+
+        def _confirm():
+            dlg.destroy()
+            deleted, errors = 0, []
+            for lf in files:
+                try: lf.unlink(); deleted += 1
+                except Exception as e: errors.append(f"{lf.name}: {e}")
+            t_ref = self._terminal(silent=True)
+            if t_ref:
+                self._reload_files(t_ref)
+            self._status(f"{deleted} {noun.lower()} file(s) deleted from {t['name']}.")
+            # Result popup
+            res = tk.Toplevel(self.root); res.title(f"{noun} Cleared"); res.configure(bg=BG)
+            res.resizable(False, False); res.attributes("-topmost", True)
+            ok_icon = "\u2713" if not errors else "\u26a0"
+            ok_fg   = "#5ecf3e" if not errors else WARN
+            hdr2 = tk.Frame(res, bg=BG2, height=48); hdr2.pack(fill="x"); hdr2.pack_propagate(False)
+            hdr2i = tk.Frame(hdr2, bg=BG2, padx=20); hdr2i.pack(fill="both", expand=True)
+            tk.Label(hdr2i, text=f"{ok_icon}  {noun} Cleared",
+                     bg=BG2, fg=ok_fg, font=(f, 12, "bold")).pack(side="left", fill="y")
+            tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+            body2 = tk.Frame(res, bg=BG, padx=24, pady=18); body2.pack(fill="both", expand=True)
+            tk.Label(body2, text=ok_icon, bg=BG, fg=ok_fg,
+                     font=(f, 22)).grid(row=0, column=0, rowspan=2, padx=(0,16), sticky="n")
+            tk.Label(body2, text=f"{deleted} file(s) deleted successfully.",
+                     bg=BG, fg=FG, font=(f, 11, "bold"), anchor="w").grid(row=0, column=1, sticky="w")
+            err_text = ("\n".join(errors[:3]) if errors else f"From terminal: {t['name']}")
+            tk.Label(body2, text=err_text, bg=BG, fg=FG2 if not errors else DANGER,
+                     font=(f, 9), anchor="w", wraplength=340).grid(row=1, column=1, sticky="w", pady=(4,0))
+            body2.columnconfigure(1, weight=1)
+            tk.Frame(res, bg=BORDER, height=1).pack(fill="x")
+            foot2 = tk.Frame(res, bg=BG2, height=44); foot2.pack(fill="x"); foot2.pack_propagate(False)
+            fi2 = tk.Frame(foot2, bg=BG2, padx=12); fi2.pack(fill="both", expand=True)
+            oh, _ = make_pill_btn(fi2, "OK", res.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                  font_size=9, padx=20, pady=6, radius=7)
+            oh.pack(side="right", pady=8)
+            res.update_idletasks(); self._center_win(res); res.deiconify(); res.lift(); res.focus_force()
+
+        confirm_h, _ = make_pill_btn(fi, f"\u2015  Clear {noun}", _confirm,
+                                     bg="#261a05", fg=WARN, hover_bg="#3d2a08",
+                                     font_size=10, padx=20, pady=7, radius=7)
+        confirm_h.pack(side="right", pady=8, padx=(0,6))
+        cancel_h, _ = make_pill_btn(fi, "Cancel", dlg.destroy, bg=BG3, fg=FG, hover_bg=BG4,
+                                    font_size=9, padx=20, pady=6, radius=7)
+        cancel_h.pack(side="right", pady=8)
+        dlg.update_idletasks(); self._center_win(dlg); dlg.deiconify(); dlg.lift(); dlg.focus_force()
+
     # ── Browse ────────────────────────────────────────────────────────────────
     def browse_files(self):
         t = self._terminal()
@@ -1905,6 +2045,8 @@ class MTManager:
         self._make_dropdown(
             self._utility_btn_holder,
             [("\u2015  Clear Logs & History", self.clear_logs_and_history),
+             ("\u2015  Clear Ticks", self.clear_ticks),
+             ("\u2015  Clear Cache", self.clear_cache),
              ("\u270e  Open MetaEditor", self.open_metaeditor)],
             "_utility_popup_open")
 
