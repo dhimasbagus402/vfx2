@@ -1,11 +1,20 @@
 [
   {
+    "version": "2.4",
+    "date": "2026-07-13",
+    "title": "Tick & Cache Scan",
+    "changes": [
+      ["new", "Scan tick data files (.tkc) under Bases and Tester/bases [account]/ticks/[pair]/."],
+      ["new", "Scan tester cache files (.tst) under Tester/cache/."]
+    ]
+  },
+  {
     "version": "2.3",
     "date": "2026-06-30",
-    "title": "Refactor & What's New",
+    "title": "Fix & What's New",
     "changes": [
-      ["new", "Popup \u201cWhat's New\u201d"],
-	  ["fix", "Guard jendela ganda pada MT Manager."]
+      ["new", "Popup \u201cWhat's New.\u201d"],
+	  ["fix", "Double window guard on MT Manager."]
     ]
   },
   {
@@ -13,18 +22,18 @@
     "date": "2026-06-13",
     "title": "Fix Bug",
     "changes": [
-	  ["new", "Menampilkan detail penggunaan Disk."],
-      ["fix", "Guard jendela ganda pada window Install MT."],
+	  ["new", "Displays Disk usage details."],
+      ["fix", "Double window guard on MT Install window."],
 	  ["fix", "Scan file Log."]
     ]
   },
   {
     "version": "2.1",
     "date": "2026-06-01",
-    "title": "Stabilitas UI",
+    "title": "UI Stability",
     "changes": [
-      ["improve", "Sinkronisasi scroll pada tabel tiga-Treeview lebih mulus."],
-      ["fix", "Artefak garis putih pada beberapa dialog dihilangkan."]
+      ["improve", "Scroll synchronization on three-Treeview tables is smoother."],
+      ["fix", "White line artifacts on some dialogs removed."]
     ]
   }
 ]

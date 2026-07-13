@@ -64,6 +64,7 @@ class MTManager:
         self._all_term_rows         = ()
         self._select_after_id       = None
         self._last_selected_path    = None
+        self._install_win           = None   # guard window Install MT
 
         # Clipboard: list of (src_path, fname, cat) + mode "copy"|"cut"
         self._clipboard: list       = []
@@ -158,7 +159,7 @@ class MTManager:
                  bg=BG2, fg=FG3, font=(f, 9))
         ver_lbl.pack(side="left", pady=(2, 0))
         ver_lbl.config(cursor="hand2")
-        Tooltip(ver_lbl, "Lihat changelog")
+        Tooltip(ver_lbl, "View changelog")
         ver_lbl.bind("<Button-1>", lambda e: self._show_whats_new(be.load_changelog(), manual=True), add="+")
         ver_lbl.bind("<Enter>", lambda e: ver_lbl.config(fg=ACCENT), add="+")
         ver_lbl.bind("<Leave>", lambda e: ver_lbl.config(fg=FG3), add="+")
@@ -917,7 +918,7 @@ class MTManager:
         Untuk Log, fname adalah relative path dari terminal root sehingga
         langsung di-join ke t['path']. Untuk kategori lain tetap pakai _folder_for.
         """
-        if cat in ("Log", "History"):
+        if cat in ("Log", "History", "Ticks", "Cache"):
             return Path(t["path"]) / fname
         return self._folder_for(t, cat) / fname
 
@@ -1909,11 +1910,32 @@ class MTManager:
 
     # ── Install MT ────────────────────────────────────────────────────────────
     def install_mt(self):
+        # Guard: jika window Install MT sudah terbuka, cukup angkat ke depan
+        # alih-alih membuka window baru (cegah duplikat).
+        existing = getattr(self, "_install_win", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    existing.lift()
+                    existing.focus_force()
+                    return
+            except Exception:
+                pass
+            self._install_win = None
+
         import threading, shutil as sh_
         f  = self._font
         fm = self._font_mono
 
         win = tk.Toplevel(self.root)
+        self._install_win = win
+        # Bersihkan referensi saat window ditutup (cek e.widget agar tak
+        # terpicu oleh event <Destroy> dari widget anak).
+        def _on_install_destroy(e):
+            if e.widget is win and getattr(self, "_install_win", None) is win:
+                self._install_win = None
+        win.bind("<Destroy>", _on_install_destroy)
         win.title("Install MetaTrader")
         win.configure(bg=BG)
         win.resizable(True, True)
@@ -2742,7 +2764,7 @@ class MTManager:
         if not entries:
             if manual:
                 themed_popup(self.root, "info", "What's New",
-                             "Belum ada catatan rilis.")
+                             "There are no release notes yet.")
             return
 
         f   = self._font
@@ -2759,7 +2781,7 @@ class MTManager:
         hdr_i = tk.Frame(hdr, bg=BG2, padx=22); hdr_i.pack(fill="both", expand=True)
         tk.Label(hdr_i, text="\u2728  What's New", bg=BG2, fg=ACCENT,
                  font=(f, 13, "bold")).pack(side="left", fill="y")
-        sub = "Changelog lengkap" if manual else f"Diperbarui ke v{__version__}"
+        sub = "Full Changelog" if manual else f"Updated to v{__version__}"
         tk.Label(hdr_i, text=sub, bg=BG2, fg=FG3,
                  font=(f, 9)).pack(side="left", padx=(10, 0), pady=(3, 0))
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
