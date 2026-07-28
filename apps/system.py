@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from urllib.request import urlopen, Request
 
-__version__ = "2.4"
+__version__ = "2.3"
 
 # ── Changelog ───────────────────────────────────────────────────────────────
 # Data catatan rilis dipisah ke file changelog.json (di folder yang sama dengan
@@ -253,8 +253,6 @@ CAT_COLORS = {
     "Indicator": "#f0a030",
     "Script":    "#a78bfa",
     "Log":       "#e8edf5",
-    "Ticks":     "#38bdf8",
-    "Cache":     "#f472b6",
 }
 
 # ── Autostart ─────────────────────────────────────────────────────────────────
@@ -911,63 +909,12 @@ def scan_terminal_files(t: dict) -> list[tuple]:
                         rel = e.name
                     rows.append(("History", rel, sz, mtime))
 
-    # Ticks (.tkc): scan Bases/[akun]/ticks/[pair]/ dan Tester/bases/[akun]/ticks/[pair]/
-    # Struktur sama seperti history, hanya folder 'history' -> 'ticks' dan ext .tkc.
-    # Akun 'Default' (akun bawaan/contoh) di-skip. _history_roots di atas sebenarnya
-    # adalah daftar root 'Bases', jadi bisa dipakai ulang di sini.
-    for _base_root in _history_roots:
-        try:
-            _accounts = [e for e in _base_root.iterdir() if e.is_dir()]
-        except OSError:
-            continue
-        for _account in _accounts:
-            if _account.name.lower() == "default":
-                continue
-            _ticks_dir = _find_dir_ci(_account, "ticks")
-            if not _ticks_dir:
-                continue
-            try:
-                _pairs = [e for e in _ticks_dir.iterdir() if e.is_dir()]
-            except OSError:
-                continue
-            for _pair in _pairs:
-                try:
-                    entries = sorted(
-                        (e for e in os.scandir(_pair)
-                         if e.is_file(follow_symlinks=False)
-                         and e.name.lower().endswith(".tkc")),
-                        key=lambda e: e.name,
-                    )
-                except OSError:
-                    continue
-                for e in entries:
-                    try:
-                        st = e.stat()
-                    except OSError:
-                        continue
-                    kb = st.st_size / 1024
-                    sz = f"{kb:.1f} KB" if kb < 1024 else f"{kb / 1024:.2f} MB"
-                    mtime = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
-                    try:
-                        rel = str(Path(e.path).relative_to(terminal_path))
-                    except ValueError:
-                        rel = e.name
-                    rows.append(("Ticks", rel, sz, mtime))
-
-    # Cache (.tst): scan Tester/cache/*.tst
-    _tester_root2 = _find_dir_ci(terminal_path, "tester")
-    if _tester_root2:
-        _cache_dir = _find_dir_ci(_tester_root2, "cache")
-        if _cache_dir:
-            rows.extend(_scan_files_to_rows(_cache_dir, terminal_path, "Cache", (".tst",)))
-
     # MT4: history (skip 'default') + tester/history (.fxt) + tester/logs (.log)
     rows.extend(_scan_mt4_history_tester(t))
 
     # Urutkan berdasarkan kategori agar baris Log/History tidak campur acak,
     # lalu berdasarkan nama file di dalam kategori yang sama.
-    _CATEGORY_ORDER = {"Expert": 0, "Indicator": 1, "Script": 2, "Log": 3,
-                       "History": 4, "Ticks": 5, "Cache": 6}
+    _CATEGORY_ORDER = {"Expert": 0, "Indicator": 1, "Script": 2, "Log": 3, "History": 4}
     rows.sort(key=lambda r: (_CATEGORY_ORDER.get(r[0], 99), r[1]))
 
     return rows
@@ -1116,13 +1063,40 @@ def collect_mt4_clear_extras(t: dict) -> tuple[list[Path], list[Path]]:
 
 
 # ── wget download ─────────────────────────────────────────────────────────────
+# User-Agent browser palsu + Referer host asal URL. Banyak file-hosting
+# (mis. vantagemarkets.com) mem-block User-Agent bawaan wget ("Wget/1.21...")
+# via WAF/CDN dan membalas 403 Forbidden walau link-nya valid & bisa dibuka
+# normal lewat browser. Menyamar sebagai Chrome + kirim Referer yang wajar
+# biasanya cukup untuk lolos dari proteksi semacam ini.
+_WGET_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/126.0.0.0 Safari/537.36")
+
+
+def _wget_cmd(url: str, dest_dir: Path) -> list:
+    """Bangun command wget dengan header anti-403 (User-Agent + Referer)."""
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(url)
+        referer = f"{parts.scheme}://{parts.netloc}/"
+    except Exception:
+        referer = url
+    return [
+        "wget", "-P", str(dest_dir), "--content-disposition",
+        "--user-agent", _WGET_USER_AGENT,
+        "--referer", referer,
+        "--header", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        url,
+    ]
+
+
 def wget_download_bg(url: str, dest_dir: Path,
                      on_success, on_error, on_timeout):
     """Unduh url ke dest_dir via wget di background thread."""
     def _run():
         try:
             result = subprocess.run(
-                ["wget", "-P", str(dest_dir), "--content-disposition", url],
+                _wget_cmd(url, dest_dir),
                 capture_output=True, text=True, timeout=120,
             )
             if result.returncode != 0:
@@ -1230,7 +1204,7 @@ def wget_then_install_bg(url: str, dest_dir: Path, broker_name: str,
 
             on_progress(f"Downloading {broker_name}\u2026")
             result = subprocess.run(
-                ["wget", "-P", str(dest_dir), "--content-disposition", url],
+                _wget_cmd(url, dest_dir),
                 capture_output=True, text=True, timeout=300,
             )
             if result.returncode != 0:
